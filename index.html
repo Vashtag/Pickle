@@ -3,12 +3,12 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>Pixel Pickle — Isometric Singles (V1.3 • Smarter AI + Real Volley)</title>
+<title>Pixel Pickle — Isometric Singles (V1.3.1)</title>
 <style>
   :root{
     --bg:#0b1020; --hud:#0b1229; --ink:#e6edf3; --muted:#9aa4b2; --accent:#86efac; --warn:#f59e0b; --err:#ef4444;
     --kitchen:#2c3357; --court:#1a2456; --lines:#f8fafc; --net:#cbd5e1;
-    --pixel-scale:3;
+    --pixel-scale:3; /* SNES-ish chunky pixels */
   }
   *{box-sizing:border-box}
   html,body{height:100%;margin:0;background:radial-gradient(1200px 800px at 60% 30%,#0e1630 0,#0b1020 60%,#070a14 100%);color:var(--ink);font-family:ui-sans-serif,system-ui,Segoe UI,Roboto,Arial}
@@ -28,7 +28,7 @@
 </style>
 </head>
 <body>
-<div id="wrap"><canvas id="game" width="1000" height="650"></canvas></div>
+<div id="wrap"><canvas id="game" width="1000" height="650" tabindex="0"></canvas></div>
 
 <div id="hud">
   <div class="pill score">
@@ -54,11 +54,11 @@
     <h2>Paused</h2>
     <div class="small">Light aim assist • Realistic serve rules & movement inertia</div>
     <ul>
-      <li>AI serves on its turn and returns legally</li>
-      <li>Volley detection fixed (no more illegal “air after bounce”)</li>
       <li>Diagonal serve to correct box; NVZ line fault on serve</li>
+      <li>Two-bounce rule enforced (serve bounce, return bounce → then volleys)</li>
+      <li>AI serves on time and returns after legal bounces</li>
     </ul>
-    <div class="small">V1.3 • © You</div>
+    <div class="small">V1.3.1 • © You</div>
   </div>
 </div>
 
@@ -74,11 +74,12 @@
     // Movement
     speed: 5.7, accel: 18.0, decel: 22.0, dashBoost: 1.2, dashDur: 0.35,
     staminaMax: 100, staminaCost: 30, staminaRegen: 18,
-    // Inputs
+    // Inputs/UX
     aimAssist: 0.26, pixelScale: parseInt(getComputedStyle(document.documentElement).getPropertyValue('--pixel-scale')) || 3,
     // Charge hold
     chargeMax: 1.25, chargeMinMul: 0.65, chargeMaxMul: 1.55
   };
+  const eps = 0.02;
 
   // Canvas/projection
   const canvas = document.getElementById('game');
@@ -87,9 +88,9 @@
   const iso = { tileW: 52, tileH: 26, zScale: 28,
     toScreen(x,y,z=0){ return [ (x-y)*this.tileW/2 + W/2, (x+y)*this.tileH/2 + H*0.48 - z*this.zScale ]; }
   };
-  const halfL = cfg.courtL/2, halfW = cfg.courtW/2, eps=0.02;
+  const halfL = cfg.courtL/2, halfW = cfg.courtW/2;
 
-  // Audio (realistic pops; uses /audio/* if present)
+  // Audio (uses /audio/hit*.mp3 if present, else synth)
   const audio = (()=>{const C=new (window.AudioContext||window.webkitAudioContext)();let S={};
     const load=async(n,u)=>{try{const r=await fetch(u);if(!r.ok)throw 0;const a=await r.arrayBuffer();S[n]=await C.decodeAudioData(a);}catch{}};
     load('hit1','/audio/hit1.mp3'); load('hit2','/audio/hit2.mp3'); load('bounce1','/audio/bounce1.mp3');
@@ -101,25 +102,36 @@
             resume:()=>C.resume?.()};
   })();
 
-  // Input & charge
-  const keys=new Set();
-  window.addEventListener('keydown',e=>{const k=e.key.toLowerCase(); if(k==='p'){togglePause();return;}
-    keys.add(k); if(['j','k','l','i'].includes(k)) beginShotCharge(k); if(e.code==='Space') beginServeCharge();});
-  window.addEventListener('keyup',e=>{const k=e.key.toLowerCase(); keys.delete(k);
-    if(['j','k','l','i'].includes(k)) releaseShotCharge(k); if(e.code==='Space') releaseServeCharge();});
-  const charge={active:false,type:null,key:null,t0:0,val:0};
+  // --- Input (layout-proof via e.code) ---
+  const keys = new Set();
+  canvas.addEventListener('pointerdown', () => { canvas.focus(); audio.resume?.(); }, {passive:true});
+  window.addEventListener('keydown', (e) => {
+    const code = e.code;
+    if (code === 'Space' || code.startsWith('Arrow')) e.preventDefault();
+    if (code === 'KeyP') { togglePause(); return; }
+    keys.add(code);
+    if (['KeyJ','KeyK','KeyL','KeyI'].includes(code)) beginShotCharge(code);
+    if (code === 'Space') beginServeCharge();
+  }, {passive:false});
+  window.addEventListener('keyup', (e) => {
+    const code = e.code;
+    keys.delete(code);
+    if (['KeyJ','KeyK','KeyL','KeyI'].includes(code)) releaseShotCharge(code);
+    if (code === 'Space') releaseServeCharge();
+  }, {passive:false});
+  window.addEventListener('blur', () => keys.clear());
 
   // Entities
   function makePlayer(side=1){return{ x:0,y:side*(halfL-0.8),z:0,vx:0,vy:0,speed:cfg.speed,
     dashT:0,stamina:cfg.staminaMax,serving:true,width:0.55,depth:0.35,reach:0.85,lastHitTime:0 }; }
   const player=makePlayer(+1), ai=makePlayer(-1); ai.serving=false;
   const ball={ x:0,y:0,z:1,vx:0,vy:0,vz:0,spinTB:0,sideSpin:0,alive:false,wobblePhase:Math.random()*Math.PI*2,
-               bouncedSinceHit:true }; // <-- key fix
+               bouncedSinceHit:true }; // true = last thing was a bounce
 
   const state={ pScore:0,aScore:0,serving:+1,rally:false,paused:false,msgT:3,
                 waitingServe:true,rallyPhase:'serve',serverBoxSign:+1 };
 
-  const ui={ pScore:el('pScore'), aScore:el('aScore'), call:el('call'), serve:el('serve'), msg:el('msg'), paused:el('paused') };
+  const ui = { pScore:el('pScore'), aScore:el('aScore'), call:el('call'), serve:el('serve'), msg:el('msg'), paused:el('paused') };
   function el(id){return document.getElementById(id);}
 
   // Serve helpers (even=Right, odd=Left)
@@ -140,7 +152,7 @@
 
   function launchServe(withSide, powerMul){
     state.waitingServe=false; state.rally=true; state.rallyPhase='serve';
-    ball.alive=true; ball.bouncedSinceHit=false; // served ball hasn't bounced yet
+    ball.alive=true; ball.bouncedSinceHit=false;
     const sign=state.serverBoxSign;
     const targetX=(Math.random()*0.4 + 0.3)*sign;
     const targetY=-withSide*(halfL - (cfg.kitchen + 1.0));
@@ -158,7 +170,6 @@
 
     // AI serve flow
     if(state.waitingServe && state.serving<0){
-      // stand behind baseline inside correct box window
       const margin=0.25, sign=state.serverBoxSign;
       ai.x=clamp(ai.x, (sign>0? 0.0: -halfW+margin), (sign>0? halfW-margin: 0.0));
       ai.y=clamp(ai.y, -halfL+0.6, -halfL+0.1);
@@ -167,14 +178,14 @@
       return;
     }
 
-    // Target where the ball will bounce (or center recover)
+    // Move toward predicted bounce/intercept
     const pred = predictLanding(1.4);
     let tx=0, ty=-2.6;
     if(pred){
       if(pred.y<0){ // AI half
         tx = clamp(pred.x, -halfW+0.55, halfW-0.55);
-        ty = clamp(pred.y + 0.65, -halfL+0.9, -0.9); // a hair behind bounce
-      } else {
+        ty = clamp(pred.y + 0.65, -halfL+0.9, -0.9);
+      } else { // ball on player half: recover center-ish
         tx = clamp(pred.x*0.6, -halfW+0.6, halfW-0.6);
         ty = -2.6;
       }
@@ -183,29 +194,19 @@
 
     if(!ball.alive) return;
 
-    // Decide if hitting is legally allowed now
+    // Avoid illegal volleys in serve/return phases
     const ballOnAISide = (ball.y < 0);
-    let allowed = false;
+    let mayAttempt = (state.rallyPhase==='open') || ball.bouncedSinceHit;
+    if(state.rallyPhase==='serve') mayAttempt = mayAttempt && ballOnAISide; // must bounce on AI side when receiving
 
-    if(state.rallyPhase==='serve'){
-      // AI is receiver only if player is serving
-      if(state.serving>0) allowed = ballOnAISide && ball.bouncedSinceHit; // must bounce first
-    } else if(state.rallyPhase==='return'){
-      // Server must let it bounce on server side; if AI served, they must wait
-      if(state.serving<0) allowed = ballOnAISide && ball.bouncedSinceHit; // after player's return bounces, OK
-      else allowed = true; // AI is receiver in this phase when player served; already bounced
-    } else { // open
-      allowed = true;
-    }
+    if(!mayAttempt) return;
 
-    if(!allowed) return;
-
-    // Hit window & execution
+    // Hit window
     const d2 = sq(ai.x - ball.x) + sq(ai.y - ball.y);
     const canReach = d2 < sq(ai.reach*1.05) && ball.z <= 1.8;
     const since = nowTime() - ai.lastHitTime;
     if(canReach && since > (this.react + 0.03*Math.random())){
-      // Choose shot based on context
+      // Choose shot by context
       let shot='drive';
       const youFar = player.y > 3.0, nearNVZ = Math.abs(ai.y) < (cfg.kitchen + 0.6);
       if(youFar && Math.random()<0.55) shot='drop';
@@ -219,11 +220,16 @@
     }
   };
 
-  // Player control
+  // Player control (accel/decel)
   function handlePlayer(dt){
     const p=player;
-    let mx=0,my=0; if(keys.has('a'))mx-=1; if(keys.has('d'))mx+=1; if(keys.has('w'))my-=1; if(keys.has('s'))my+=1;
-    const dash = keys.has('shift') && p.stamina>=cfg.staminaCost && p.dashT<=0;
+    let mx=0,my=0;
+    if (keys.has('KeyA')) mx -= 1;
+    if (keys.has('KeyD')) mx += 1;
+    if (keys.has('KeyW')) my -= 1;
+    if (keys.has('KeyS')) my += 1;
+
+    const dash = (keys.has('ShiftLeft') || keys.has('ShiftRight')) && p.stamina>=cfg.staminaCost && p.dashT<=0;
     if(dash){ p.dashT=cfg.dashDur; p.stamina-=cfg.staminaCost; }
     const dashMul = (p.dashT>0)? cfg.dashBoost:1.0;
 
@@ -234,6 +240,8 @@
     p.vy = approach(p.vy, wantVy, (Math.sign(wantVy-p.vy)>=0? cfg.accel: cfg.decel)*dt);
 
     p.x += p.vx*dt; p.y += p.vy*dt;
+
+    // bounds (player half)
     p.x = clamp(p.x, -halfW+0.4, halfW-0.4);
     p.y = clamp(p.y, 0.7, halfL-0.6);
 
@@ -247,23 +255,30 @@
     if(p.dashT>0) p.dashT -= dt; else p.stamina = Math.min(cfg.staminaMax, p.stamina + cfg.staminaRegen*dt);
   }
 
-  // Charge helpers
-  function beginShotCharge(key){ if(state.paused||state.waitingServe||charge.active) return; charge.active=true; charge.type='shot'; charge.key=key; charge.t0=nowTime(); audio.resume?.(); }
-  function releaseShotCharge(key){
-    if(!charge.active||charge.type!=='shot'||charge.key!==key) return;
-    const mul=endChargeGetMul();
-    const spinTB=(keys.has('e')? +1:0) + (keys.has('q')? -1:0);
-    const map={j:'drive',k:'dink',l:'lob',i:'drop'}, type=map[key]||'drive';
+  // Charge helpers (by key code)
+  const charge={active:false,type:null,key:null,t0:0,val:0};
+  function beginShotCharge(code){
+    if(state.paused || state.waitingServe || charge.active) return;
+    charge.active=true; charge.type='shot'; charge.key=code; charge.t0=nowTime(); audio.resume?.();
+  }
+  function releaseShotCharge(code){
+    if(!charge.active || charge.type!=='shot' || charge.key!==code) return;
+    const mul=endChargeGetMul(); endCharge();
+    const spinTB=(keys.has('KeyE')? +1:0) + (keys.has('KeyQ')? -1:0);
+    const map={ KeyJ:'drive', KeyK:'dink', KeyL:'lob', KeyI:'drop' }, type=map[code]||'drive';
     if(!ball.alive) return;
     const canReach = (sq(player.x - ball.x) + sq(player.y - ball.y)) < sq(player.reach) && ball.z <= 1.8;
     if(!canReach) return;
     performShot(player, +1, type, spinTB*0.8, 0, mul);
   }
-  function beginServeCharge(){ if(state.paused||!state.waitingServe||state.serving<0||charge.active) return; charge.active=true; charge.type='serve'; charge.key='space'; charge.t0=nowTime(); audio.resume?.(); }
+  function beginServeCharge(){
+    if(state.paused || !state.waitingServe || state.serving<0 || charge.active) return;
+    charge.active=true; charge.type='serve'; charge.key='Space'; charge.t0=nowTime(); audio.resume?.();
+  }
   function releaseServeCharge(){
     if(!charge.active || charge.type!=='serve') return;
     const mul=endChargeGetMul(); endCharge();
-    // foot faults (behind baseline + correct lateral box)
+    // Foot faults: must be behind baseline & in correct lateral box
     const margin=0.25, sign=state.serverBoxSign;
     const behindOK = (player.y >= halfL-0.35-eps);
     const inBox = (player.x >= (sign>0? 0.0-eps: -halfW+margin)) && (player.x <= (sign>0? halfW-margin: 0.0+eps));
@@ -273,13 +288,11 @@
   function endChargeGetMul(){ const held=Math.min(cfg.chargeMax, nowTime()-charge.t0); return cfg.chargeMinMul + (cfg.chargeMaxMul - cfg.chargeMinMul)*(held/cfg.chargeMax); }
   function endCharge(){ Object.assign(charge,{active:false,type:null,key:null,t0:0,val:0}); }
 
-  // Perform shot (uses real volley logic)
+  // Perform shot (real volley logic + per-shot caps)
   function performShot(p, side, type, spinTB, sideSpin, powerMul=1.0){
-    const isVolley = !ball.bouncedSinceHit; // FIX: true only if no bounce since last hit
+    const isVolley = !ball.bouncedSinceHit; // volley = no bounce since last hit
     const inKitchen = (Math.abs(p.y) < cfg.kitchen + 0.001); // line counts
     if(isVolley && inKitchen){ pointTo(-side); flashMsg("Kitchen volley fault", true); return; }
-
-    // Two-bounce enforcement
     if(isVolley && state.rallyPhase!=='open'){ pointTo(-side); flashMsg("Volley before two bounces", true); return; }
 
     // target with assist
@@ -302,14 +315,14 @@
 
     ball.vx=vx; ball.vy=vy; ball.vz=v.vz;
     ball.spinTB=clamp(spinTB,-1,1); ball.sideSpin=clamp(sideSpin,-1,1);
-    ball.bouncedSinceHit=false; // reset volley state on contact
+    ball.bouncedSinceHit=false; // will be volley until next bounce
     audio.hit(0.95);
     if(side>0) player.lastHitTime=nowTime(); else ai.lastHitTime=nowTime();
   }
 
   // Ball update + rules
   function updateBall(dt){
-    // tether during serve preview
+    // Serve preview
     if(state.waitingServe){
       const s=(state.serving>0)? player: ai;
       ball.x=s.x; ball.y=s.y + (state.serving>0? -0.5: +0.5); ball.z=1.0;
@@ -329,7 +342,6 @@
     const wobA=(cfg.wobbleAmpDeg*Math.PI/180)*Math.min(1, speedXY/9.0);
     const c1=Math.cos(ball.wobblePhase)*wobA, s1=Math.sin(ball.wobblePhase)*wobA*0.7;
     let vx=ball.vx, vy=ball.vy;
-    // tiny 2D rotations
     const cA=Math.cos(c1), sA=Math.sin(c1); let nvx=vx*cA - vy*sA, nvy=vx*sA + vy*cA;
     const cB=Math.cos(s1), sB=Math.sin(s1); nvx=nvx*cB - nvy*sB; nvy=nvx*sB + nvy*cB;
     ball.vx=nvx; ball.vy=nvy;
@@ -339,7 +351,8 @@
 
     // net clip
     if( (ball.y - ball.vy*dt) * ball.y <= 0 ){
-      const zAt = ball.z - ball.vz*dt * (Math.abs(ball.y)/(Math.abs(ball.vy)||1e-6));
+      const denom = Math.abs(ball.vy)||1e-6;
+      const zAt = ball.z - ball.vz*dt * (Math.abs(ball.y)/denom);
       if(zAt <= cfg.netH + 0.03 && Math.abs(ball.x) < halfW*0.55){
         ball.y = (ball.vy>0? 0.02 : -0.02);
         ball.vy *= -0.35; ball.vx *= 0.85; ball.vz *= 0.7; audio.bounce(0.8);
@@ -354,12 +367,12 @@
       ball.vx *= 0.9*skid; ball.vy *= 0.9*skid;
       ball.vx += (Math.random()*2-1)*0.09; ball.vy += (Math.random()*2-1)*0.09;
 
-      ball.bouncedSinceHit = true; // mark for volley legality
+      ball.bouncedSinceHit = true;
 
       // Two-bounce state machine
       const side = (ball.y>0)? +1 : -1; // +1 player half
       if(state.rallyPhase==='serve'){
-        // Must land: receiver side, correct diagonal (x sign), and beyond NVZ (line is fault)
+        // Must land: receiver side, correct diagonal (x sign), and beyond NVZ (line = fault)
         const correctX = (Math.sign(ball.x||0.0001) === state.serverBoxSign);
         const beyondNVZ = (Math.abs(ball.y) > cfg.kitchen + eps);
         const landedReceiver = (side === -state.serving);
@@ -369,13 +382,13 @@
         if(side === state.serving) state.rallyPhase='open';
       }
 
-      // Out after bounce (lines in; NVZ line on serve already handled)
+      // Out after bounce (lines are IN; NVZ line on serve handled above)
       const outX = Math.abs(ball.x) > halfW+0.001;
       const outY = Math.abs(ball.y) > halfL+0.001;
       if(outX || outY){ pointTo( (side>0)? -1 : +1 ); return; }
     }
 
-    // way long/wide
+    // way long/wide in air
     if(Math.abs(ball.x) > halfW+0.9 || Math.abs(ball.y) > halfL+0.9 || ball.z>6){
       pointTo( (ball.y>0)? -1 : +1 ); return;
     }
@@ -420,15 +433,6 @@
     ui.call.textContent=`(${state.pScore}–${state.aScore})`;
   }
 
-  // Utils
-  const clamp=(v,a,b)=>Math.max(a,Math.min(b,v)), sq=v=>v*v, nowTime=()=>performance.now()/1000;
-  const approach=(v,target,delta)=> (v<target)? Math.min(target, v+delta) : Math.max(target, v-delta);
-  function vecNorm(x,y){ const m=Math.hypot(x,y)||1; return {x:x/m, y:y/m}; }
-
-  // Pause
-  function togglePause(){ state.paused=!state.paused; ui.paused.classList.toggle('show', state.paused); if(!state.paused) audio.resume?.(); }
-  window.togglePause=togglePause;
-
   // Render
   function draw(){
     ctx.clearRect(0,0,W,H);
@@ -436,25 +440,28 @@
     drawShadow(ball);
     drawPlayer(ai,false); drawPlayer(player,true);
     if(state.waitingServe || ball.alive) drawBall(ball);
-    drawHUD(); drawChargeMeter();
+    drawChargeMeter();
   }
   function drawCourt(){
     const corners=[[-halfW,-halfL],[halfW,-halfL],[halfW,halfL],[-halfW,halfL]];
     ctx.beginPath(); corners.forEach(([x,y],i)=>{const [sx,sy]=iso.toScreen(x,y,0); if(i===0) ctx.moveTo(sx,sy); else ctx.lineTo(sx,sy);});
     ctx.closePath(); ctx.fillStyle='rgba(26,36,86,0.95)'; ctx.fill();
+    // kitchen bands
     drawBand(-cfg.kitchen,0,'rgba(44,51,87,0.95)'); drawBand(0,cfg.kitchen,'rgba(44,51,87,0.95)');
+    // outer lines
     ctx.strokeStyle='rgba(248,250,252,0.9)'; ctx.lineWidth=2; ctx.beginPath();
     corners.forEach(([x,y],i)=>{const [sx,sy]=iso.toScreen(x,y,0); if(i===0) ctx.moveTo(sx,sy); else ctx.lineTo(sx,sy);});
     ctx.closePath(); ctx.stroke();
+    // net plane line
     const [sx1,sy1]=iso.toScreen(-halfW,0,0), [sx2,sy2]=iso.toScreen(halfW,0,0);
     ctx.strokeStyle='rgba(203,213,225,0.4)'; ctx.lineWidth=1; ctx.beginPath(); ctx.moveTo(sx1,sy1); ctx.lineTo(sx2,sy2); ctx.stroke();
+    // centerline (x=0) to hint boxes
     const [cx1,cy1]=iso.toScreen(0,-halfL,0), [cx2,cy2]=iso.toScreen(0,halfL,0);
     ctx.strokeStyle='rgba(203,213,225,0.2)'; ctx.beginPath(); ctx.moveTo(cx1,cy1); ctx.lineTo(cx2,cy2); ctx.stroke();
   }
   function drawBand(y1,y2,color){
     const pts=[[-halfW,y1],[halfW,y1],[halfW,y2],[-halfW,y2]];
-    ctx.beginPath(); pts.forEach(([x,y],i)=>{const [sx,sy]=iso.toScreen(x,y,0); if(i===0) ctx.moveTo(sx,sy); else ctx.lineTo(sx,sy);});
-    ctx.closePath(); ctx.fillStyle=color; ctx.fill();
+    ctx.beginPath(); pts.forEach(([x,y],i)=>{const [sx,sy]=iso.toScreen(x,y,0); if(i===0) ctx.moveTo(sx,sy); else ctx.lineTo(sx,sy);}); ctx.closePath(); ctx.fillStyle=color; ctx.fill();
   }
   function drawNet(){
     const [lx,ly]=iso.toScreen(-halfW,0,cfg.netH), [rx,ry]=iso.toScreen(halfW,0,cfg.netH);
@@ -494,7 +501,6 @@
     ctx.strokeStyle='rgba(253,224,71,0.6)'; ctx.lineWidth=1; ctx.beginPath(); ctx.arc(sx,sy,6,0,Math.PI*2); ctx.stroke();
     ctx.restore();
   }
-  function drawHUD(){ if(state.msgT>0 && state.msgT<999){ state.msgT -= dt; if(state.msgT<=0) ui.msg.textContent=''; } }
   function drawChargeMeter(){
     if(!charge.active) return;
     const held=Math.min(cfg.chargeMax, nowTime()-charge.t0);
@@ -513,6 +519,11 @@
   }
 
   // Helpers
+  function clamp(v,a,b){ return Math.max(a,Math.min(b,v)); }
+  function sq(v){ return v*v; }
+  function nowTime(){ return performance.now()/1000; }
+  function approach(v,target,delta){ return (v<target)? Math.min(target, v+delta) : Math.max(target, v-delta); }
+  function vecNorm(x,y){ const m=Math.hypot(x,y)||1; return {x:x/m, y:y/m}; }
   function clampToOpponent(x,y,side){
     const mx=halfW*(1-cfg.aimAssist), my=(halfL-0.8)*(1-cfg.aimAssist);
     const tx=clamp(x,-mx,mx);
@@ -521,6 +532,16 @@
   }
   function aimTo(sx,sy,tx,ty,zVel,speed){
     const dx=tx-sx, dy=ty-sy, d=Math.hypot(dx,dy)||1; return {vx:(dx/d)*speed, vy:(dy/d)*speed, vz:zVel};
+  }
+  function steerTo(p,tx,ty,dt){
+    const dashMul=(p.dashT>0)? cfg.dashBoost:1.0;
+    const wantV = vecNorm(tx-p.x, ty-p.y);
+    const max = p.speed*dashMul;
+    const vx = wantV.x*max, vy=wantV.y*max;
+    p.vx = approach(p.vx, vx, (Math.sign(vx-p.vx)>=0? cfg.accel: cfg.decel)*dt);
+    p.vy = approach(p.vy, vy, (Math.sign(vy-p.vy)>=0? cfg.accel: cfg.decel)*dt);
+    p.x += p.vx*dt; p.y += p.vy*dt;
+    if(p===ai){ p.x=clamp(p.x,-halfW+0.4,halfW-0.4); p.y=clamp(p.y,-halfL+0.6,-0.7); }
   }
 
   // Loop
@@ -531,6 +552,10 @@
     handlePlayer(dtl);
     aiBrain.decide(dtl);
     updateBall(dtl);
+
+    // message timer
+    if(state.msgT>0 && state.msgT<999){ state.msgT -= dtl; if(state.msgT<=0) ui.msg.textContent=''; }
+
     // clamp halves
     player.x=clamp(player.x,-halfW+0.4,halfW-0.4); player.y=clamp(player.y,0.7,halfL-0.6);
     ai.x=clamp(ai.x,-halfW+0.4,halfW-0.4); ai.y=clamp(ai.y,-halfL+0.6,-0.7);
@@ -538,7 +563,11 @@
 
   // UI
   function flashMsg(t,sticky=false){ ui.msg.textContent=t; state.msgT=sticky?999:3; }
-  updateScoreUI(); flashMsg("AI upgraded: serves on time, returns after bounce (real volley logic).");
+  function togglePause(){ state.paused=!state.paused; ui.paused.classList.toggle('show', state.paused); if(!state.paused) audio.resume?.(); }
+  window.togglePause=togglePause;
+
+  // Boot
+  updateScoreUI(); flashMsg("Hold SPACE to charge your first serve. WASD to move, J/K/L/I to shoot.");
   setupServe(+1);
   frame();
 })();
