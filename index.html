@@ -3,12 +3,12 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>Pixel Pickle — Isometric Singles (V1.1 — hold-to-charge + Space serve)</title>
+<title>Pixel Pickle — Isometric Singles (V1.3 • Smarter AI + Real Volley)</title>
 <style>
   :root{
     --bg:#0b1020; --hud:#0b1229; --ink:#e6edf3; --muted:#9aa4b2; --accent:#86efac; --warn:#f59e0b; --err:#ef4444;
     --kitchen:#2c3357; --court:#1a2456; --lines:#f8fafc; --net:#cbd5e1;
-    --pixel-scale:3; /* SNES-ish chunky pixels */
+    --pixel-scale:3;
   }
   *{box-sizing:border-box}
   html,body{height:100%;margin:0;background:radial-gradient(1200px 800px at 60% 30%,#0e1630 0,#0b1020 60%,#070a14 100%);color:var(--ink);font-family:ui-sans-serif,system-ui,Segoe UI,Roboto,Arial}
@@ -40,726 +40,505 @@
 
 <div class="legend">
   <b>Controls</b><br/>
-  Move: W/S/A/D &nbsp;•&nbsp; Dash: Shift<br/>
+  Move: W/S/A/D (acceleration) &nbsp;•&nbsp; Dash: Shift<br/>
   Shots (hold to charge): J=Drive, K=Dink, L=Lob, I=Drop<br/>
   Spin: hold Q=Backspin, E=Topspin<br/>
-  <b>Serve:</b> hold Space to charge, release to hit<br/>
+  <b>Serve:</b> hold Space to charge (even=Right, odd=Left), release to hit<br/>
   Pause: P
 </div>
 
-<div class="msg" id="msg">Classic singles • Side-out to 11 (win by 2) • Indoor • Kitchen enforced</div>
+<div class="msg" id="msg">Singles • Side-out to 11 (win by 2) • Indoor • NVZ enforced • Two-bounce rule</div>
 
 <div class="paused" id="paused">
   <div class="panel">
     <h2>Paused</h2>
-    <div class="small">P to resume • Light aim assist ON • Realistic indoor hits</div>
+    <div class="small">Light aim assist • Realistic serve rules & movement inertia</div>
     <ul>
-      <li>Hold-to-charge power for all shots</li>
-      <li>Serve with Space (hold → release)</li>
-      <li>Kitchen volley faults auto-called</li>
+      <li>AI serves on its turn and returns legally</li>
+      <li>Volley detection fixed (no more illegal “air after bounce”)</li>
+      <li>Diagonal serve to correct box; NVZ line fault on serve</li>
     </ul>
-    <div class="small">V1.1 • © You</div>
+    <div class="small">V1.3 • © You</div>
   </div>
 </div>
 
 <script>
 (() => {
-  // --- Config (meters & physics) ---
+  // --- Config ---
   const cfg = {
-    courtW: 6.10,     // width (m)
-    courtL: 13.41,    // length (m)
-    kitchen: 2.13,    // 7 ft (m)
-    netH: 0.872,      // net height (m)
-    serveToWin: 11,   // classic race
-    g: 13.0,          // gravity (tuned)
-    drag: 0.9,        // linear-ish drag
-    spinZ: 7.5,       // top/backspin vertical effect
-    sideSpinK: 1.6,   // sidespin lateral drift
-    wobbleAmpDeg: 3.0,// max wobble at speed
-    wobbleFreq: 6.0,  // Hz
-    dashBoost: 1.4,   // dash multiplier
-    dashDur: 0.4,     // seconds
-    staminaMax: 100,
-    staminaCost: 35,
-    staminaRegen: 16,
-    aimAssist: 0.28,  // light assist
-    pixelScale: parseInt(getComputedStyle(document.documentElement).getPropertyValue('--pixel-scale')) || 3,
-    // Power charge
-    chargeMax: 1.2,   // seconds to max
-    chargeMinMul: 0.6,
-    chargeMaxMul: 1.6
+    courtW: 6.10, courtL: 13.41, kitchen: 2.13, netH: 0.872,
+    serveToWin: 11,
+    // Physics (indoor realism)
+    g: 12.0, drag: 1.05, spinZ: 5.5, sideSpinK: 1.3,
+    wobbleAmpDeg: 1.2, wobbleFreq: 3.2,
+    // Movement
+    speed: 5.7, accel: 18.0, decel: 22.0, dashBoost: 1.2, dashDur: 0.35,
+    staminaMax: 100, staminaCost: 30, staminaRegen: 18,
+    // Inputs
+    aimAssist: 0.26, pixelScale: parseInt(getComputedStyle(document.documentElement).getPropertyValue('--pixel-scale')) || 3,
+    // Charge hold
+    chargeMax: 1.25, chargeMinMul: 0.65, chargeMaxMul: 1.55
   };
 
-  // --- Canvas & projection ---
+  // Canvas/projection
   const canvas = document.getElementById('game');
   const ctx = canvas.getContext('2d');
   const W = canvas.width, H = canvas.height;
-
-  // Isometric projection
-  const iso = {
-    tileW: 52, tileH: 26, zScale: 28,
-    toScreen(x, y, z=0) {
-      const sx = (x - y) * this.tileW/2 + W/2;
-      const sy = (x + y) * this.tileH/2 + H*0.48 - z * this.zScale;
-      return [sx, sy];
-    }
+  const iso = { tileW: 52, tileH: 26, zScale: 28,
+    toScreen(x,y,z=0){ return [ (x-y)*this.tileW/2 + W/2, (x+y)*this.tileH/2 + H*0.48 - z*this.zScale ]; }
   };
+  const halfL = cfg.courtL/2, halfW = cfg.courtW/2, eps=0.02;
 
-  // World bounds
-  const halfL = cfg.courtL/2, halfW = cfg.courtW/2;
-
-  // --- Audio (realistic-ish) ---
-  const audio = (() => {
-    const ctxA = new (window.AudioContext || window.webkitAudioContext)();
-    let samples = {};
-    const tryLoad = async (name, url) => {
-      try {
-        const res = await fetch(url);
-        if(!res.ok) throw 0;
-        const arr = await res.arrayBuffer();
-        samples[name] = await ctxA.decodeAudioData(arr);
-      } catch(e) { /* fallback synth used */ }
-    };
-    tryLoad('hit1','/audio/hit1.mp3'); tryLoad('hit2','/audio/hit2.mp3'); tryLoad('bounce1','/audio/bounce1.mp3');
-
-    const playBuf = (buf, gain=0.7, rate=1.0) => {
-      const src = ctxA.createBufferSource(); src.buffer = buf; src.playbackRate.value = rate;
-      const g = ctxA.createGain(); g.gain.value = gain;
-      src.connect(g).connect(ctxA.destination); src.start();
-    };
-    const synthPop = (type='hit', v=1.0) => {
-      const now = ctxA.currentTime;
-      const noise = ctxA.createBufferSource();
-      const nBuf = ctxA.createBuffer(1, ctxA.sampleRate*0.06, ctxA.sampleRate);
-      const data = nBuf.getChannelData(0);
-      for(let i=0;i<data.length;i++){ data[i] = (Math.random()*2-1) * 0.35; }
-      noise.buffer = nBuf;
-
-      const biq = ctxA.createBiquadFilter(); biq.type='bandpass'; biq.frequency.value = (type==='bounce')? 900: 1300; biq.Q.value=2.5;
-
-      const osc = ctxA.createOscillator(); osc.type='sine'; osc.frequency.value = (type==='bounce')? 200: 260;
-      const oGain = ctxA.createGain(); oGain.gain.setValueAtTime(0.6*v, now);
-      oGain.gain.exponentialRampToValueAtTime(0.001, now+0.06);
-
-      const nGain = ctxA.createGain(); nGain.gain.setValueAtTime(0.5*v, now);
-      nGain.gain.exponentialRampToValueAtTime(0.001, now+0.05);
-
-      noise.connect(biq).connect(nGain);
-      const mix = ctxA.createGain(); mix.gain.value = 1.0;
-      const oMix = ctxA.createGain(); oMix.gain.value = 1.0;
-      nGain.connect(mix); osc.connect(oMix); oMix.connect(mix); mix.connect(ctxA.destination);
-      noise.start(); noise.stop(now+0.06); osc.start(); osc.stop(now+0.06);
-    };
-    return {
-      hit:(v=1)=> samples.hit1? playBuf(samples.hit1, 0.6*v, 1.0+Math.random()*0.05): synthPop('hit', v),
-      hit2:(v=1)=> samples.hit2? playBuf(samples.hit2, 0.6*v, 1.0+Math.random()*0.05): synthPop('hit', v*0.9),
-      bounce:(v=1)=> samples.bounce1? playBuf(samples.bounce1, 0.5*v, 1.0+Math.random()*0.08): synthPop('bounce', v*0.9),
-      resume:()=> ctxA.resume?.()
-    };
+  // Audio (realistic pops; uses /audio/* if present)
+  const audio = (()=>{const C=new (window.AudioContext||window.webkitAudioContext)();let S={};
+    const load=async(n,u)=>{try{const r=await fetch(u);if(!r.ok)throw 0;const a=await r.arrayBuffer();S[n]=await C.decodeAudioData(a);}catch{}};
+    load('hit1','/audio/hit1.mp3'); load('hit2','/audio/hit2.mp3'); load('bounce1','/audio/bounce1.mp3');
+    const play=(b,g=0.7,r=1)=>{const s=C.createBufferSource();s.buffer=b;s.playbackRate.value=r;const G=C.createGain();G.gain.value=g;s.connect(G).connect(C.destination);s.start();};
+    const synth=(t='hit',v=1)=>{const now=C.currentTime;const nb=C.createBuffer(1,C.sampleRate*0.06,C.sampleRate);const d=nb.getChannelData(0);for(let i=0;i<d.length;i++)d[i]=(Math.random()*2-1)*0.35;const n=C.createBufferSource();n.buffer=nb;const bp=C.createBiquadFilter();bp.type='bandpass';bp.frequency.value=(t==='bounce')?900:1300;bp.Q.value=2.5;const o=C.createOscillator();o.type='sine';o.frequency.value=(t==='bounce')?200:260;const og=C.createGain();og.gain.setValueAtTime(0.6*v,now);og.gain.exponentialRampToValueAtTime(0.001,now+0.06);const ng=C.createGain();ng.gain.setValueAtTime(0.5*v,now);ng.gain.exponentialRampToValueAtTime(0.001,now+0.05);n.connect(bp).connect(ng);const mix=C.createGain();ng.connect(mix);o.connect(og);og.connect(mix);mix.connect(C.destination);n.start();n.stop(now+0.06);o.start();o.stop(now+0.06);};
+    return {hit:(v=1)=>S.hit1?play(S.hit1,0.6*v,1+Math.random()*0.05):synth('hit',v),
+            hit2:(v=1)=>S.hit2?play(S.hit2,0.6*v,1+Math.random()*0.05):synth('hit',0.9*v),
+            bounce:(v=1)=>S.bounce1?play(S.bounce1,0.5*v,1+Math.random()*0.08):synth('bounce',0.9*v),
+            resume:()=>C.resume?.()};
   })();
 
-  // --- Input ---
-  const keys = new Set();
-  window.addEventListener('keydown', (e)=>{
-    const k = e.key.toLowerCase();
-    // Pause
-    if(k==='p'){ togglePause(); return; }
-    keys.add(k);
-    // Start charge for shots
-    if(['j','k','l','i'].includes(k)){ beginShotCharge(k); }
-    // Start serve charge with Space (by code)
-    if(e.code==='Space'){ beginServeCharge(); }
-  });
-  window.addEventListener('keyup', (e)=>{
-    const k = e.key.toLowerCase();
-    keys.delete(k);
-    // Release shot
-    if(['j','k','l','i'].includes(k)){ releaseShotCharge(k); }
-    // Release serve
-    if(e.code==='Space'){ releaseServeCharge(); }
-  });
+  // Input & charge
+  const keys=new Set();
+  window.addEventListener('keydown',e=>{const k=e.key.toLowerCase(); if(k==='p'){togglePause();return;}
+    keys.add(k); if(['j','k','l','i'].includes(k)) beginShotCharge(k); if(e.code==='Space') beginServeCharge();});
+  window.addEventListener('keyup',e=>{const k=e.key.toLowerCase(); keys.delete(k);
+    if(['j','k','l','i'].includes(k)) releaseShotCharge(k); if(e.code==='Space') releaseServeCharge();});
+  const charge={active:false,type:null,key:null,t0:0,val:0};
 
-  // Charge state
-  const charge = {
-    active:false,
-    type:null,      // 'shot' | 'serve'
-    key:null,       // 'j','k','l','i'
-    t0:0,
-    val:0           // 0..1
-  };
+  // Entities
+  function makePlayer(side=1){return{ x:0,y:side*(halfL-0.8),z:0,vx:0,vy:0,speed:cfg.speed,
+    dashT:0,stamina:cfg.staminaMax,serving:true,width:0.55,depth:0.35,reach:0.85,lastHitTime:0 }; }
+  const player=makePlayer(+1), ai=makePlayer(-1); ai.serving=false;
+  const ball={ x:0,y:0,z:1,vx:0,vy:0,vz:0,spinTB:0,sideSpin:0,alive:false,wobblePhase:Math.random()*Math.PI*2,
+               bouncedSinceHit:true }; // <-- key fix
 
-  // --- Entities ---
-  function makePlayer(side=1){
-    return {
-      x:0, y: side*(halfL-0.8), z:0,
-      vx:0, vy:0, speed: 6.0,
-      dashT:0, stamina: cfg.staminaMax, serving:true,
-      width:0.55, depth:0.35, reach:0.85,
-      lastHitTime:0
-    };
-  }
-  const player = makePlayer(+1);
-  const ai = makePlayer(-1); ai.serving = false;
+  const state={ pScore:0,aScore:0,serving:+1,rally:false,paused:false,msgT:3,
+                waitingServe:true,rallyPhase:'serve',serverBoxSign:+1 };
 
-  // Ball
-  const ball = {
-    x:0, y:0, z:1.0,
-    vx:0, vy:0, vz:0,
-    spinTB:0, sideSpin:0,
-    alive:false, lastBounceY:null, wobblePhase: Math.random()*Math.PI*2,
-    bouncesSinceServe:0
-  };
+  const ui={ pScore:el('pScore'), aScore:el('aScore'), call:el('call'), serve:el('serve'), msg:el('msg'), paused:el('paused') };
+  function el(id){return document.getElementById(id);}
 
-  // Match state
-  const state = {
-    pScore:0, aScore:0, serving:+1, // +1 player, -1 ai
-    rally:false, paused:false, msgT:3.0,
-    waitingServe:true
-  };
+  // Serve helpers (even=Right, odd=Left)
+  function currentServerScore(){ return (state.serving>0)? state.pScore : state.aScore; }
+  function computeServerBoxSign(){ return (currentServerScore()%2===0)? +1 : -1; }
 
-  const ui = {
-    pScore: document.getElementById('pScore'),
-    aScore: document.getElementById('aScore'),
-    call: document.getElementById('call'),
-    serve: document.getElementById('serve'),
-    msg: document.getElementById('msg'),
-    paused: document.getElementById('paused')
-  };
-
-  // --- Serving flow ---
-  let aiServeT = 0;
   function setupServe(serverSide=state.serving){
-    state.waitingServe = true;
-    state.rally = false;
-    ball.alive = false;
-    ball.spinTB = 0; ball.sideSpin = 0; ball.bouncesSinceServe = 0; ball.vx=ball.vy=ball.vz=0;
-    const s = (serverSide>0)? player: ai;
-    ball.x = s.x;
-    ball.y = s.y + (serverSide>0? -0.5 : +0.5);
-    ball.z = 1.0;
+    state.waitingServe=true; state.rally=false; state.rallyPhase='serve';
+    state.serverBoxSign=computeServerBoxSign();
+    Object.assign(ball,{alive:false,vx:0,vy:0,vz:0,spinTB:0,sideSpin:0,z:1,bouncedSinceHit:true});
+    const s=(serverSide>0)? player: ai;
+    ball.x=s.x; ball.y=s.y + (serverSide>0? -0.5 : +0.5);
     updateScoreUI();
-    if(serverSide>0){
-      flashMsg("Your serve — hold SPACE to charge, release to hit.");
-    } else {
-      flashMsg("AI serve…");
-      aiServeT = 0.6 + Math.random()*0.8;
-    }
+    const sideLabel=(state.serverBoxSign>0?'Right':'Left');
+    if(serverSide>0){ flashMsg(`Your serve — ${sideLabel} box. Hold SPACE to charge, release to hit.`); }
+    else { flashMsg(`AI serve — ${sideLabel} box.`); aiServeT = 0.8 + Math.random()*0.7; }
   }
 
   function launchServe(withSide, powerMul){
-    // Place new velocity target
-    state.waitingServe = false;
-    state.rally = true;
-    ball.alive = true;
-    const s = (withSide>0)? player: ai;
-    const targetX = (Math.random()*0.6 - 0.3);
-    const targetY = -withSide*(halfL - 2.4);
-    const baseSpeed = 7.5; // base serve speed
-    const baseZ = 1.5;
-    const v = aimTo(ball.x, ball.y, targetX, targetY, baseZ*Math.sqrt(powerMul), baseSpeed*powerMul);
-    ball.vx=v.vx; ball.vy=v.vy; ball.vz=v.vz;
-    audio.hit(1.0);
+    state.waitingServe=false; state.rally=true; state.rallyPhase='serve';
+    ball.alive=true; ball.bouncedSinceHit=false; // served ball hasn't bounced yet
+    const sign=state.serverBoxSign;
+    const targetX=(Math.random()*0.4 + 0.3)*sign;
+    const targetY=-withSide*(halfL - (cfg.kitchen + 1.0));
+    const baseSpeed=7.2, baseZ=1.5;
+    const v=aimTo(ball.x,ball.y,targetX,targetY, baseZ*Math.sqrt(powerMul), baseSpeed*powerMul);
+    ball.vx=v.vx; ball.vy=v.vy; ball.vz=v.vz; audio.hit(1.0);
   }
 
-  // --- Aiming helper (light assist) ---
-  function clampToOpponent(x, y, side){
-    const tgtMarginX = halfW * (1.0 - cfg.aimAssist);
-    const tgtMarginY = (halfL-0.8) * (1.0 - cfg.aimAssist);
-    const tx = Math.max(-tgtMarginX, Math.min(tgtMarginX, x));
-    const ty = (side>0)? -Math.max(1.2, Math.min(tgtMarginY, Math.abs(y))) : Math.max(-tgtMarginY, Math.min(-1.2, y));
-    return [tx, ty];
-  }
-  function aimTo(sx, sy, tx, ty, zVel, speed){
-    const dx = tx - sx, dy = ty - sy;
-    const dist = Math.hypot(dx,dy);
-    const dirx = dx / (dist||1), diry = dy / (dist||1);
-    const vx = dirx * speed, vy = diry * speed, vz = zVel;
-    return {vx,vy,vz};
-  }
+  // AI brain
+  const aiBrain={ react:0.09, errCone:0.08, tSince:0 };
+  let aiServeT=0;
 
-  // --- Simple AI ---
-  const aiBrain = {
-    react: 0.08, errCone: 0.09, tSince: 0,
-    decide(dt){
-      this.tSince += dt;
-      // During AI serve: wait then launch
-      if(state.waitingServe && state.serving<0){
-        aiServeT -= dt;
-        if(aiServeT<=0){
-          const power = 0.8 + Math.random()*0.6; // 0.8–1.4
-          launchServe(-1, power);
-        }
-        return;
+  aiBrain.decide=function(dt){
+    this.tSince+=dt;
+
+    // AI serve flow
+    if(state.waitingServe && state.serving<0){
+      // stand behind baseline inside correct box window
+      const margin=0.25, sign=state.serverBoxSign;
+      ai.x=clamp(ai.x, (sign>0? 0.0: -halfW+margin), (sign>0? halfW-margin: 0.0));
+      ai.y=clamp(ai.y, -halfL+0.6, -halfL+0.1);
+      aiServeT -= dt;
+      if(aiServeT<=0){ const power=0.9 + Math.random()*0.5; launchServe(-1, power); }
+      return;
+    }
+
+    // Target where the ball will bounce (or center recover)
+    const pred = predictLanding(1.4);
+    let tx=0, ty=-2.6;
+    if(pred){
+      if(pred.y<0){ // AI half
+        tx = clamp(pred.x, -halfW+0.55, halfW-0.55);
+        ty = clamp(pred.y + 0.65, -halfL+0.9, -0.9); // a hair behind bounce
+      } else {
+        tx = clamp(pred.x*0.6, -halfW+0.6, halfW-0.6);
+        ty = -2.6;
       }
+    }
+    steerTo(ai, tx, ty, dt);
 
-      // Normal rally behavior
-      const pred = predictLanding(1.2);
-      const targetY = (pred && pred.y<0)? Math.max(-halfL+0.6, Math.min(-0.7, pred.y+0.8)) : -2.5;
-      const targetX = (pred)? Math.max(-halfW+0.4, Math.min(halfW-0.4, pred.x)) : 0;
-      steerTo(ai, targetX, targetY, dt);
+    if(!ball.alive) return;
 
-      // hit decision
-      if(!ball.alive) return;
-      const d = dist2d(ai.x - ball.x, ai.y - ball.y);
-      const canReach = d < (ai.reach*ai.reach) && ball.z <= 1.6;
-      if(canReach && (performance.now()/1000 - ai.lastHitTime) > (this.react + 0.03*Math.random())){
-        let shot = 'drive';
-        const youFar = player.y > 3.2;
-        if(youFar && Math.random()<0.5) shot='drop';
-        else if(ball.y > -1.0 && Math.random()<0.4) shot='dink';
-        else if(Math.random()<0.15) shot='lob';
+    // Decide if hitting is legally allowed now
+    const ballOnAISide = (ball.y < 0);
+    let allowed = false;
 
-        const spin = (shot==='drive')? +0.6 : (shot==='dink'? -0.3 : (shot==='drop'? +0.2 : -0.2));
-        const power = 0.85 + Math.random()*0.5; // 0.85–1.35
-        performShot(ai, -1, shot, spin, (Math.random()<0.25)? (Math.random()<0.5?-0.4:0.4): 0, power);
-        ai.lastHitTime = performance.now()/1000;
-      }
+    if(state.rallyPhase==='serve'){
+      // AI is receiver only if player is serving
+      if(state.serving>0) allowed = ballOnAISide && ball.bouncedSinceHit; // must bounce first
+    } else if(state.rallyPhase==='return'){
+      // Server must let it bounce on server side; if AI served, they must wait
+      if(state.serving<0) allowed = ballOnAISide && ball.bouncedSinceHit; // after player's return bounces, OK
+      else allowed = true; // AI is receiver in this phase when player served; already bounced
+    } else { // open
+      allowed = true;
+    }
+
+    if(!allowed) return;
+
+    // Hit window & execution
+    const d2 = sq(ai.x - ball.x) + sq(ai.y - ball.y);
+    const canReach = d2 < sq(ai.reach*1.05) && ball.z <= 1.8;
+    const since = nowTime() - ai.lastHitTime;
+    if(canReach && since > (this.react + 0.03*Math.random())){
+      // Choose shot based on context
+      let shot='drive';
+      const youFar = player.y > 3.0, nearNVZ = Math.abs(ai.y) < (cfg.kitchen + 0.6);
+      if(youFar && Math.random()<0.55) shot='drop';
+      else if(nearNVZ && Math.random()<0.5) shot='dink';
+      else if(Math.random()<0.12) shot='lob';
+
+      const spin = (shot==='drive')? +0.5 : (shot==='dink'? -0.35 : (shot==='drop'? +0.25 : -0.25));
+      const power = 0.9 + Math.random()*0.4;
+      performShot(ai, -1, shot, spin, 0, power);
+      ai.lastHitTime=nowTime();
     }
   };
 
-  function steerTo(p, tx, ty, dt){
-    const dashMul = (p.dashT>0)? cfg.dashBoost : 1.0;
-    const sp = p.speed * dashMul;
-    const dx = tx - p.x, dy = ty - p.y;
-    const mag = Math.hypot(dx,dy);
-    if(mag>0.01){
-      p.vx = (dx/mag) * sp;
-      p.vy = (dy/mag) * sp;
-      p.x += p.vx * dt;
-      p.y += p.vy * dt;
-    }
-  }
-
-  // --- Player input & movement ---
+  // Player control
   function handlePlayer(dt){
-    const p = player;
-    let mx=0,my=0;
-    if(keys.has('a')) mx -= 1;
-    if(keys.has('d')) mx += 1;
-    if(keys.has('w')) my -= 1;
-    if(keys.has('s')) my += 1;
-    const mag = Math.hypot(mx,my);
+    const p=player;
+    let mx=0,my=0; if(keys.has('a'))mx-=1; if(keys.has('d'))mx+=1; if(keys.has('w'))my-=1; if(keys.has('s'))my+=1;
     const dash = keys.has('shift') && p.stamina>=cfg.staminaCost && p.dashT<=0;
-    if(dash){ p.dashT = cfg.dashDur; p.stamina -= cfg.staminaCost; }
-    const dashMul = (p.dashT>0)? cfg.dashBoost : 1.0;
-    if(mag>0){
-      const sp = p.speed * dashMul;
-      p.x += (mx/mag)*sp*dt;
-      p.y += (my/mag)*sp*dt;
-    } else {
-      p.vx*=0.8; p.vy*=0.8;
-    }
-    // keep in bounds (player half)
-    p.x = Math.max(-halfW+0.4, Math.min(halfW-0.4, p.x));
-    p.y = Math.max(0.7, Math.min(halfL-0.6, p.y));
+    if(dash){ p.dashT=cfg.dashDur; p.stamina-=cfg.staminaCost; }
+    const dashMul = (p.dashT>0)? cfg.dashBoost:1.0;
 
-    // stamina
+    const want = vecNorm(mx,my);
+    const wantVx = want.x * p.speed * dashMul, wantVy = want.y * p.speed * dashMul;
+
+    p.vx = approach(p.vx, wantVx, (Math.sign(wantVx-p.vx)>=0? cfg.accel: cfg.decel)*dt);
+    p.vy = approach(p.vy, wantVy, (Math.sign(wantVy-p.vy)>=0? cfg.accel: cfg.decel)*dt);
+
+    p.x += p.vx*dt; p.y += p.vy*dt;
+    p.x = clamp(p.x, -halfW+0.4, halfW-0.4);
+    p.y = clamp(p.y, 0.7, halfL-0.6);
+
+    // During your serve, restrict to correct box behind baseline
+    if(state.waitingServe && state.serving>0){
+      const margin=0.25, sign=state.serverBoxSign;
+      p.x = clamp(p.x, (sign>0? 0.0: -halfW+margin), (sign>0? halfW-margin: 0.0));
+      p.y = clamp(p.y, halfL-0.35, halfL-0.1);
+    }
+
     if(p.dashT>0) p.dashT -= dt; else p.stamina = Math.min(cfg.staminaMax, p.stamina + cfg.staminaRegen*dt);
   }
 
-  // --- Charge helpers ---
-  function beginShotCharge(key){
-    if(state.paused) return;
-    if(state.waitingServe) return; // cannot hit until serve
-    if(charge.active) return;
-    charge.active = true; charge.type='shot'; charge.key=key; charge.t0=performance.now()/1000; charge.val=0;
-    audio.resume?.();
-  }
+  // Charge helpers
+  function beginShotCharge(key){ if(state.paused||state.waitingServe||charge.active) return; charge.active=true; charge.type='shot'; charge.key=key; charge.t0=nowTime(); audio.resume?.(); }
   function releaseShotCharge(key){
-    if(!charge.active || charge.type!=='shot' || charge.key!==key) return;
-    const held = Math.min(cfg.chargeMax, (performance.now()/1000 - charge.t0));
-    const mul = cfg.chargeMinMul + (cfg.chargeMaxMul - cfg.chargeMinMul) * (held/cfg.chargeMax);
-    charge.active=false; charge.type=null; charge.key=null; charge.val=0;
-
-    // Spin modifiers on release
-    const spinTB = (keys.has('e')? +1 : 0) + (keys.has('q')? -1 : 0);
-    const map = {j:'drive', k:'dink', l:'lob', i:'drop'};
-    const type = map[key] || 'drive';
-
-    // Try to hit
-    const d2 = dist2d(player.x - ball.x, player.y - ball.y);
-    const canReach = ball.alive && d2 < (player.reach*player.reach) && ball.z <= 1.6;
+    if(!charge.active||charge.type!=='shot'||charge.key!==key) return;
+    const mul=endChargeGetMul();
+    const spinTB=(keys.has('e')? +1:0) + (keys.has('q')? -1:0);
+    const map={j:'drive',k:'dink',l:'lob',i:'drop'}, type=map[key]||'drive';
+    if(!ball.alive) return;
+    const canReach = (sq(player.x - ball.x) + sq(player.y - ball.y)) < sq(player.reach) && ball.z <= 1.8;
     if(!canReach) return;
     performShot(player, +1, type, spinTB*0.8, 0, mul);
   }
-
-  function beginServeCharge(){
-    if(state.paused) return;
-    if(!state.waitingServe || state.serving<0) return;
-    if(charge.active) return;
-    charge.active = true; charge.type='serve'; charge.key='space'; charge.t0=performance.now()/1000; charge.val=0;
-    audio.resume?.();
-  }
+  function beginServeCharge(){ if(state.paused||!state.waitingServe||state.serving<0||charge.active) return; charge.active=true; charge.type='serve'; charge.key='space'; charge.t0=nowTime(); audio.resume?.(); }
   function releaseServeCharge(){
     if(!charge.active || charge.type!=='serve') return;
-    const held = Math.min(cfg.chargeMax, (performance.now()/1000 - charge.t0));
-    const mul = cfg.chargeMinMul + (cfg.chargeMaxMul - cfg.chargeMinMul) * (held/cfg.chargeMax);
-    charge.active=false; charge.type=null; charge.key=null; charge.val=0;
-    if(state.waitingServe && state.serving>0){
-      launchServe(+1, mul);
-    }
+    const mul=endChargeGetMul(); endCharge();
+    // foot faults (behind baseline + correct lateral box)
+    const margin=0.25, sign=state.serverBoxSign;
+    const behindOK = (player.y >= halfL-0.35-eps);
+    const inBox = (player.x >= (sign>0? 0.0-eps: -halfW+margin)) && (player.x <= (sign>0? halfW-margin: 0.0+eps));
+    if(!(behindOK && inBox)){ flashMsg("Foot fault on serve", true); pointTo(-1); return; }
+    if(state.waitingServe && state.serving>0) launchServe(+1, mul);
   }
+  function endChargeGetMul(){ const held=Math.min(cfg.chargeMax, nowTime()-charge.t0); return cfg.chargeMinMul + (cfg.chargeMaxMul - cfg.chargeMinMul)*(held/cfg.chargeMax); }
+  function endCharge(){ Object.assign(charge,{active:false,type:null,key:null,t0:0,val:0}); }
 
-  // --- Perform a shot ---
+  // Perform shot (uses real volley logic)
   function performShot(p, side, type, spinTB, sideSpin, powerMul=1.0){
-    // Kitchen fault on volley?
-    const inKitchen = (p.y < cfg.kitchen + 0.01);
-    const isVolley = (ball.z > 0.02);
-    if(isVolley && inKitchen){
-      pointTo(-side);
-      flashMsg("Kitchen fault (volley) — point to opponent", true);
-      return;
-    }
-    // Aim target with light assist
-    const rawTX = (Math.random()*halfW*1.4 - halfW*0.7);
-    const rawTY = -side*(halfL - 1.2);
-    const [tx,ty] = clampToOpponent(rawTX, rawTY, side);
+    const isVolley = !ball.bouncedSinceHit; // FIX: true only if no bounce since last hit
+    const inKitchen = (Math.abs(p.y) < cfg.kitchen + 0.001); // line counts
+    if(isVolley && inKitchen){ pointTo(-side); flashMsg("Kitchen volley fault", true); return; }
 
-    let speed=7.0, zVel=1.4;
-    if(type==='drive'){ speed=8.6; zVel=1.1; }
-    else if(type==='dink'){ speed=4.2; zVel=0.7; }
-    else if(type==='lob'){ speed=6.8; zVel=2.1; spinTB = -Math.abs(spinTB)||-0.4; }
-    else if(type==='drop'){ speed=6.4; zVel=1.5; spinTB = Math.max(spinTB, +0.35); }
+    // Two-bounce enforcement
+    if(isVolley && state.rallyPhase!=='open'){ pointTo(-side); flashMsg("Volley before two bounces", true); return; }
 
-    // Apply power modifier (heavier on speed, lighter on arc)
-    const v = aimTo(ball.x, ball.y, tx, ty, zVel*Math.sqrt(powerMul), speed*powerMul);
+    // target with assist
+    const rawTX=(Math.random()*halfW*1.3 - halfW*0.65), rawTY=-side*(halfL - 1.2);
+    const [tx,ty]=clampToOpponent(rawTX, rawTY, side);
 
-    // small aim error
-    const err = (side>0)? 0.05 : aiBrain.errCone;
-    const ang = (Math.random()*2-1)*err;
-    const cs=Math.cos(ang), sn=Math.sin(ang);
-    const vx = v.vx*cs - v.vy*sn, vy=v.vx*sn + v.vy*cs;
+    // per-shot caps (prevent turbo dinks)
+    let speed=7.0, zVel=1.4, maxS=8.8;
+    if(type==='drive'){ speed=8.4; zVel=1.05; maxS=9.2; }
+    else if(type==='dink'){ speed=4.0; zVel=0.7; maxS=4.8; }
+    else if(type==='lob'){ speed=6.6; zVel=2.05; maxS=7.4; spinTB = -Math.abs(spinTB)||-0.4; }
+    else if(type==='drop'){ speed=6.2; zVel=1.45; maxS=7.0; spinTB = Math.max(spinTB, +0.35); }
 
-    ball.vx = vx; ball.vy = vy; ball.vz = v.vz;
-    ball.spinTB = clamp(spinTB, -1, 1);
-    ball.sideSpin = clamp(sideSpin, -1, 1);
+    const sp = Math.min(speed*powerMul, maxS);
+    const v = aimTo(ball.x, ball.y, tx, ty, zVel*Math.sqrt(powerMul), sp);
+
+    // small error cone (AI wider)
+    const err=(side>0)? 0.04 : 0.07, ang=(Math.random()*2-1)*err, cs=Math.cos(ang), sn=Math.sin(ang);
+    const vx=v.vx*cs - v.vy*sn, vy=v.vx*sn + v.vy*cs;
+
+    ball.vx=vx; ball.vy=vy; ball.vz=v.vz;
+    ball.spinTB=clamp(spinTB,-1,1); ball.sideSpin=clamp(sideSpin,-1,1);
+    ball.bouncedSinceHit=false; // reset volley state on contact
     audio.hit(0.95);
-    if(side>0) player.lastHitTime = performance.now()/1000; else ai.lastHitTime = performance.now()/1000;
+    if(side>0) player.lastHitTime=nowTime(); else ai.lastHitTime=nowTime();
   }
 
-  // --- Physics update ---
+  // Ball update + rules
   function updateBall(dt){
+    // tether during serve preview
     if(state.waitingServe){
-      // Keep serve ball loosely near server (if player moves, keep x aligned for feedback)
-      if(state.serving>0){
-        ball.x = player.x;
-        ball.y = player.y - 0.5;
-      } else {
-        ball.x = ai.x;
-        ball.y = ai.y + 0.5;
-      }
+      const s=(state.serving>0)? player: ai;
+      ball.x=s.x; ball.y=s.y + (state.serving>0? -0.5: +0.5); ball.z=1.0;
       return;
     }
     if(!ball.alive) return;
 
-    // drag
-    const dragF = Math.exp(-cfg.drag*dt);
-    ball.vx *= dragF; ball.vy *= dragF; ball.vz = (ball.vz - cfg.g*dt)*dragF;
-
-    // spin effects
-    ball.vz += (-cfg.spinZ * ball.spinTB) * dt;
-    ball.vx += (cfg.sideSpinK * ball.sideSpin) * dt;
-
+    // drag & gravity
+    const df=Math.exp(-cfg.drag*dt);
+    ball.vx*=df; ball.vy*=df; ball.vz=(ball.vz - cfg.g*dt)*df;
+    // spin
+    ball.vz += (-cfg.spinZ*ball.spinTB)*dt;
+    ball.vx += (cfg.sideSpinK*ball.sideSpin)*dt;
     // wobble
-    ball.wobblePhase += cfg.wobbleFreq * dt;
-    const vxy = Math.hypot(ball.vx, ball.vy);
-    const wobbleAmp = (cfg.wobbleAmpDeg*Math.PI/180) * Math.min(1, vxy/9.0);
-    const wobX = Math.cos(ball.wobblePhase)*wobbleAmp;
-    const wobY = Math.sin(ball.wobblePhase)*wobbleAmp*0.7;
-    const cwx=Math.cos(wobX), swx=Math.sin(wobX);
-    const cwy=Math.cos(wobY), swy=Math.sin(wobY);
+    ball.wobblePhase += cfg.wobbleFreq*dt;
+    const speedXY=Math.hypot(ball.vx,ball.vy);
+    const wobA=(cfg.wobbleAmpDeg*Math.PI/180)*Math.min(1, speedXY/9.0);
+    const c1=Math.cos(ball.wobblePhase)*wobA, s1=Math.sin(ball.wobblePhase)*wobA*0.7;
     let vx=ball.vx, vy=ball.vy;
-    let nvx = vx*cwx - vy*swx;
-    let nvy = vx*swx + vy*cwx;
-    nvx = nvx*cwy - nvy*swy;
-    nvy = nvx*swy + nvy*cwy;
-    ball.vx = nvx; ball.vy = nvy;
+    // tiny 2D rotations
+    const cA=Math.cos(c1), sA=Math.sin(c1); let nvx=vx*cA - vy*sA, nvy=vx*sA + vy*cA;
+    const cB=Math.cos(s1), sB=Math.sin(s1); nvx=nvx*cB - nvy*sB; nvy=nvx*sB + nvy*cB;
+    ball.vx=nvx; ball.vy=nvy;
 
     // integrate
     ball.x += ball.vx*dt; ball.y += ball.vy*dt; ball.z += ball.vz*dt;
 
-    // net collision (plane y=0)
+    // net clip
     if( (ball.y - ball.vy*dt) * ball.y <= 0 ){
-      const zAtPlane = ball.z - ball.vz*dt * (Math.abs((ball.y)/(ball.vy||1e-6)));
-      if(zAtPlane <= cfg.netH + 0.03 && Math.abs(ball.x) < halfW*0.55){
+      const zAt = ball.z - ball.vz*dt * (Math.abs(ball.y)/(Math.abs(ball.vy)||1e-6));
+      if(zAt <= cfg.netH + 0.03 && Math.abs(ball.x) < halfW*0.55){
         ball.y = (ball.vy>0? 0.02 : -0.02);
-        ball.vy *= -0.35; ball.vx *= 0.85; ball.vz *= 0.7;
-        audio.bounce(0.8);
+        ball.vy *= -0.35; ball.vx *= 0.85; ball.vz *= 0.7; audio.bounce(0.8);
       }
     }
 
     // ground bounce
     if(ball.z <= 0){
-      ball.z = 0;
-      audio.bounce(0.9);
-      ball.vz = Math.abs(ball.vz) * 0.52; // restitution
-      const skid = clamp(1 - 0.25*ball.spinTB, 0.7, 1.25);
-      ball.vx *= 0.88 * skid; ball.vy *= 0.88 * skid;
-      ball.vx += (Math.random()*2-1)*0.12; ball.vy += (Math.random()*2-1)*0.12;
+      ball.z=0; audio.bounce(0.9);
+      ball.vz = Math.abs(ball.vz)*0.52;
+      const skid=clamp(1 - 0.22*ball.spinTB, 0.75, 1.2);
+      ball.vx *= 0.9*skid; ball.vy *= 0.9*skid;
+      ball.vx += (Math.random()*2-1)*0.09; ball.vy += (Math.random()*2-1)*0.09;
 
-      ball.bouncesSinceServe++;
-      const outX = Math.abs(ball.x) > halfW+0.05;
-      const outY = Math.abs(ball.y) > halfL+0.05;
-      if(outX || outY){
-        pointTo( (ball.y>0)? -1 : +1 );
-        return;
+      ball.bouncedSinceHit = true; // mark for volley legality
+
+      // Two-bounce state machine
+      const side = (ball.y>0)? +1 : -1; // +1 player half
+      if(state.rallyPhase==='serve'){
+        // Must land: receiver side, correct diagonal (x sign), and beyond NVZ (line is fault)
+        const correctX = (Math.sign(ball.x||0.0001) === state.serverBoxSign);
+        const beyondNVZ = (Math.abs(ball.y) > cfg.kitchen + eps);
+        const landedReceiver = (side === -state.serving);
+        if(!(landedReceiver && correctX && beyondNVZ)){ flashMsg("Fault on serve", true); pointTo(-state.serving); return; }
+        state.rallyPhase='return';
+      } else if(state.rallyPhase==='return'){
+        if(side === state.serving) state.rallyPhase='open';
       }
+
+      // Out after bounce (lines in; NVZ line on serve already handled)
+      const outX = Math.abs(ball.x) > halfW+0.001;
+      const outY = Math.abs(ball.y) > halfL+0.001;
+      if(outX || outY){ pointTo( (side>0)? -1 : +1 ); return; }
     }
 
-    // Way out
+    // way long/wide
     if(Math.abs(ball.x) > halfW+0.9 || Math.abs(ball.y) > halfL+0.9 || ball.z>6){
-      pointTo( (ball.y>0)? -1 : +1 );
-      return;
+      pointTo( (ball.y>0)? -1 : +1 ); return;
     }
   }
 
-  // Predict landing
-  function predictLanding(horizon=1.5){
+  // Prediction
+  function predictLanding(h=1.4){
     if(!ball.alive) return null;
-    let x=ball.x, y=ball.y, z=ball.z, vx=ball.vx, vy=ball.vy, vz=ball.vz;
-    const dt=0.02; let t=0;
-    while(t<horizon){
-      const dragF = Math.exp(-cfg.drag*dt);
-      vx*=dragF; vy*=dragF; vz=(vz - cfg.g*dt)*dragF;
-      vz += (-cfg.spinZ * ball.spinTB) * dt;
-      vx += (cfg.sideSpinK * ball.sideSpin) * dt;
+    let x=ball.x,y=ball.y,z=ball.z,vx=ball.vx,vy=ball.vy,vz=ball.vz,t=0,dt=0.02;
+    while(t<h){
+      const df=Math.exp(-cfg.drag*dt);
+      vx*=df; vy*=df; vz=(vz - cfg.g*dt)*df;
+      vz += (-cfg.spinZ*ball.spinTB)*dt;
+      vx += (cfg.sideSpinK*ball.sideSpin)*dt;
       x+=vx*dt; y+=vy*dt; z+=vz*dt; t+=dt;
       if(z<=0) return {x,y,t};
     }
     return null;
   }
 
-  // --- Scoring ---
-  function pointTo(side){ // +1 player scores, -1 ai scores
+  // Scoring
+  function pointTo(side){
     ball.alive=false; state.rally=false;
-    const server = state.serving;
-    const hitter = side;
-    if(hitter === server){
-      if(side>0) state.pScore++; else state.aScore++;
-      audio.hit2(0.9);
-    } else {
-      // side-out (no point)
-      state.serving *= -1;
-    }
+    const server=state.serving, hitter=side;
+    if(hitter===server){ if(side>0) state.pScore++; else state.aScore++; audio.hit2(0.9); }
+    else { state.serving *= -1; }
     updateScoreUI();
-    const win = checkWin();
-    if(!win){
-      setTimeout(()=> setupServe(state.serving), 450);
-    }
+    if(checkWin()) return;
+    setTimeout(()=> setupServe(state.serving), 500);
   }
   function checkWin(){
-    const p=state.pScore, a=state.aScore;
-    const lead = Math.abs(p-a);
-    if((p>=cfg.serveToWin || a>=cfg.serveToWin) && lead>=2){
-      flashMsg( (p>a? "You win!":"AI wins!") + " — press P to play again", true);
-      state.paused = true; ui.paused.classList.add('show');
-      return true;
+    const p=state.pScore,a=state.aScore,lead=Math.abs(p-a);
+    if((p>=cfg.serveToWin||a>=cfg.serveToWin) && lead>=2){
+      flashMsg((p>a?"You win!":"AI wins!")+" — P to restart", true);
+      state.paused=true; ui.paused.classList.add('show'); return true;
     }
     return false;
   }
   function updateScoreUI(){
-    ui.pScore.textContent = state.pScore;
-    ui.aScore.textContent = state.aScore;
-    ui.serve.textContent = (state.serving>0? "Your serve":"AI serve");
-    ui.call.textContent = `(${state.pScore}–${state.aScore})`;
+    ui.pScore.textContent=state.pScore; ui.aScore.textContent=state.aScore;
+    ui.serve.textContent=(state.serving>0?"Your serve":"AI serve")+` (${currentServerScore()%2===0? "Right":"Left"})`;
+    ui.call.textContent=`(${state.pScore}–${state.aScore})`;
   }
 
-  function flashMsg(text, sticky=false){
-    ui.msg.textContent = text;
-    state.msgT = sticky? 999: 3.0;
-  }
+  // Utils
+  const clamp=(v,a,b)=>Math.max(a,Math.min(b,v)), sq=v=>v*v, nowTime=()=>performance.now()/1000;
+  const approach=(v,target,delta)=> (v<target)? Math.min(target, v+delta) : Math.max(target, v-delta);
+  function vecNorm(x,y){ const m=Math.hypot(x,y)||1; return {x:x/m, y:y/m}; }
 
-  // --- Utils ---
-  const clamp = (v,a,b)=>Math.max(a,Math.min(b,v));
-  const dist2d = (dx,dy)=> dx*dx+dy*dy;
+  // Pause
+  function togglePause(){ state.paused=!state.paused; ui.paused.classList.toggle('show', state.paused); if(!state.paused) audio.resume?.(); }
+  window.togglePause=togglePause;
 
-  // --- Pause ---
-  function togglePause(){
-    state.paused = !state.paused;
-    ui.paused.classList.toggle('show', state.paused);
-    if(!state.paused) audio.resume?.();
-  }
-  window.togglePause = togglePause;
-
-  // --- Render ---
+  // Render
   function draw(){
     ctx.clearRect(0,0,W,H);
-    drawCourt();
-    drawNet();
+    drawCourt(); drawNet(); drawServiceBoxes();
     drawShadow(ball);
-    drawPlayer(ai, false);
-    drawPlayer(player, true);
-    if(state.waitingServe && !ball.alive){
-      // draw idle ball at server hand
-      drawBall(ball);
-    } else if(ball.alive){
-      drawBall(ball);
-    }
-    drawHUD();
-    drawChargeMeter();
+    drawPlayer(ai,false); drawPlayer(player,true);
+    if(state.waitingServe || ball.alive) drawBall(ball);
+    drawHUD(); drawChargeMeter();
   }
-
   function drawCourt(){
-    const corners = [
-      [-halfW,-halfL],[halfW,-halfL],[halfW,halfL],[-halfW,halfL]
-    ];
-    ctx.beginPath();
-    corners.forEach(([x,y],i)=> {
-      const [sx,sy] = iso.toScreen(x,y,0);
-      if(i===0) ctx.moveTo(sx,sy); else ctx.lineTo(sx,sy);
-    });
-    ctx.closePath();
-    ctx.fillStyle = 'rgba(26,36,86,0.95)'; ctx.fill();
-
-    // kitchen bands
-    drawBand(-cfg.kitchen, 0, 'rgba(44,51,87,0.95)');
-    drawBand(0, cfg.kitchen, 'rgba(44,51,87,0.95)');
-
-    // sidelines
-    ctx.strokeStyle = 'rgba(248,250,252,0.9)'; ctx.lineWidth=2;
-    ctx.beginPath();
-    corners.forEach(([x,y],i)=> {
-      const [sx,sy] = iso.toScreen(x,y,0);
-      if(i===0) ctx.moveTo(sx,sy); else ctx.lineTo(sx,sy);
-    });
+    const corners=[[-halfW,-halfL],[halfW,-halfL],[halfW,halfL],[-halfW,halfL]];
+    ctx.beginPath(); corners.forEach(([x,y],i)=>{const [sx,sy]=iso.toScreen(x,y,0); if(i===0) ctx.moveTo(sx,sy); else ctx.lineTo(sx,sy);});
+    ctx.closePath(); ctx.fillStyle='rgba(26,36,86,0.95)'; ctx.fill();
+    drawBand(-cfg.kitchen,0,'rgba(44,51,87,0.95)'); drawBand(0,cfg.kitchen,'rgba(44,51,87,0.95)');
+    ctx.strokeStyle='rgba(248,250,252,0.9)'; ctx.lineWidth=2; ctx.beginPath();
+    corners.forEach(([x,y],i)=>{const [sx,sy]=iso.toScreen(x,y,0); if(i===0) ctx.moveTo(sx,sy); else ctx.lineTo(sx,sy);});
     ctx.closePath(); ctx.stroke();
-
-    // centerline
-    const [sx1,sy1] = iso.toScreen(-halfW,0,0);
-    const [sx2,sy2] = iso.toScreen( halfW,0,0);
-    ctx.strokeStyle='rgba(203,213,225,0.4)'; ctx.lineWidth=1;
-    ctx.beginPath(); ctx.moveTo(sx1,sy1); ctx.lineTo(sx2,sy2); ctx.stroke();
+    const [sx1,sy1]=iso.toScreen(-halfW,0,0), [sx2,sy2]=iso.toScreen(halfW,0,0);
+    ctx.strokeStyle='rgba(203,213,225,0.4)'; ctx.lineWidth=1; ctx.beginPath(); ctx.moveTo(sx1,sy1); ctx.lineTo(sx2,sy2); ctx.stroke();
+    const [cx1,cy1]=iso.toScreen(0,-halfL,0), [cx2,cy2]=iso.toScreen(0,halfL,0);
+    ctx.strokeStyle='rgba(203,213,225,0.2)'; ctx.beginPath(); ctx.moveTo(cx1,cy1); ctx.lineTo(cx2,cy2); ctx.stroke();
   }
-  function drawBand(y1, y2, color){
-    const pts = [[-halfW,y1],[halfW,y1],[halfW,y2],[-halfW,y2]];
-    ctx.beginPath();
-    pts.forEach(([x,y],i)=>{ const [sx,sy]=iso.toScreen(x,y,0); if(i===0) ctx.moveTo(sx,sy); else ctx.lineTo(sx,sy);});
+  function drawBand(y1,y2,color){
+    const pts=[[-halfW,y1],[halfW,y1],[halfW,y2],[-halfW,y2]];
+    ctx.beginPath(); pts.forEach(([x,y],i)=>{const [sx,sy]=iso.toScreen(x,y,0); if(i===0) ctx.moveTo(sx,sy); else ctx.lineTo(sx,sy);});
     ctx.closePath(); ctx.fillStyle=color; ctx.fill();
   }
   function drawNet(){
-    const [lx,ly] = iso.toScreen(-halfW,0,cfg.netH);
-    const [rx,ry] = iso.toScreen( halfW,0,cfg.netH);
-    ctx.strokeStyle = '#cbd5e1'; ctx.lineWidth=3;
-    ctx.beginPath(); ctx.moveTo(lx,ly); ctx.lineTo(rx,ry); ctx.stroke();
-    // posts
-    const postZ = cfg.netH+0.4;
-    [[-halfW,0],[halfW,0]].forEach(([x,y])=>{
-      const [sx,sy]=iso.toScreen(x,y,0), [sx2,sy2]=iso.toScreen(x,y,postZ);
-      ctx.strokeStyle='rgba(148,163,184,0.8)'; ctx.lineWidth=4;
-      ctx.beginPath(); ctx.moveTo(sx,sy); ctx.lineTo(sx2,sy2); ctx.stroke();
-    });
+    const [lx,ly]=iso.toScreen(-halfW,0,cfg.netH), [rx,ry]=iso.toScreen(halfW,0,cfg.netH);
+    ctx.strokeStyle='#cbd5e1'; ctx.lineWidth=3; ctx.beginPath(); ctx.moveTo(lx,ly); ctx.lineTo(rx,ry); ctx.stroke();
+    const postZ=cfg.netH+0.4; [[-halfW,0],[halfW,0]].forEach(([x,y])=>{const [sx,sy]=iso.toScreen(x,y,0), [sx2,sy2]=iso.toScreen(x,y,postZ); ctx.strokeStyle='rgba(148,163,184,0.8)'; ctx.lineWidth=4; ctx.beginPath(); ctx.moveTo(sx,sy); ctx.lineTo(sx2,sy2); ctx.stroke();});
   }
-  function drawPlayer(p, isHuman){
-    const [sx,sy] = iso.toScreen(p.x, p.y, 0);
-    ctx.save();
-    ctx.translate(sx, sy);
-    ctx.fillStyle = isHuman? '#86efac' : '#60a5fa';
-    const s = cfg.pixelScale;
-    ctx.fillRect(-4*s, -14*s, 8*s, 8*s); // head
-    ctx.fillRect(-5*s, -6*s, 10*s, 12*s); // torso
-    ctx.fillStyle = '#fef08a';            // paddle
-    ctx.fillRect(5*s, -8*s, 6*s, 3*s);
-    ctx.restore();
-
-    // stamina bar (human only)
+  function drawServiceBoxes(){
+    if(!state.waitingServe) return;
+    const sign=state.serverBoxSign;
+    const bx=(sign>0)? [0,halfW]: [-halfW,0];
+    const byTop=-halfL, byBot=-(cfg.kitchen);
+    ctx.save(); ctx.globalAlpha=0.12; ctx.fillStyle='#22c55e';
+    const poly=[[bx[0],byTop],[bx[1],byTop],[bx[1],byBot],[bx[0],byBot]];
+    ctx.beginPath(); poly.forEach(([x,y],i)=>{const [sx,sy]=iso.toScreen(x,y,0); if(i===0) ctx.moveTo(sx,sy); else ctx.lineTo(sx,sy);}); ctx.closePath(); ctx.fill(); ctx.restore();
+  }
+  function drawPlayer(p,isHuman){
+    const [sx,sy]=iso.toScreen(p.x,p.y,0);
+    ctx.save(); ctx.translate(sx,sy); ctx.fillStyle=isHuman? '#86efac' : '#60a5fa';
+    const s=cfg.pixelScale; ctx.fillRect(-4*s,-14*s,8*s,8*s); ctx.fillRect(-5*s,-6*s,10*s,12*s);
+    ctx.fillStyle='#fef08a'; ctx.fillRect(5*s,-8*s,6*s,3*s); ctx.restore();
     if(isHuman){
-      ctx.save();
-      ctx.globalAlpha=0.8;
-      const [bx,by] = iso.toScreen(p.x, p.y, 0);
-      ctx.fillStyle='rgba(11,18,41,.7)'; ctx.fillRect(bx-30, by-60, 60, 6);
-      ctx.fillStyle='#86efac'; ctx.fillRect(bx-30, by-60, 60*(p.stamina/cfg.staminaMax), 6);
-      ctx.restore();
+      ctx.save(); ctx.globalAlpha=0.8; const [bx,by]=iso.toScreen(p.x,p.y,0);
+      ctx.fillStyle='rgba(11,18,41,.7)'; ctx.fillRect(bx-30,by-60,60,6);
+      ctx.fillStyle='#86efac'; ctx.fillRect(bx-30,by-60,60*(p.stamina/cfg.staminaMax),6); ctx.restore();
     }
   }
   function drawShadow(b){
-    const show = state.waitingServe || b.alive;
-    if(!show) return;
-    const [sxGround, syGround] = iso.toScreen(b.x, b.y, 0);
-    const size = clamp(6 - b.z*1.8, 1.5, 6);
-    ctx.save(); ctx.globalAlpha=0.35; ctx.fillStyle='#000';
-    ctx.beginPath(); ctx.ellipse(sxGround, syGround, size*1.2, size*0.8, 0, 0, Math.PI*2); ctx.fill();
-    ctx.restore();
+    const show=state.waitingServe || b.alive; if(!show) return;
+    const [sx,sy]=iso.toScreen(b.x,b.y,0); const size=clamp(6 - b.z*1.8,1.5,6);
+    ctx.save(); ctx.globalAlpha=0.35; ctx.fillStyle='#000'; ctx.beginPath(); ctx.ellipse(sx,sy,size*1.2,size*0.8,0,0,Math.PI*2); ctx.fill(); ctx.restore();
   }
   function drawBall(b){
-    const [sx,sy] = iso.toScreen(b.x, b.y, b.z);
+    const [sx,sy]=iso.toScreen(b.x,b.y,b.z);
     ctx.save();
-    // trail
-    if(b.alive){
-      ctx.strokeStyle='rgba(255,255,255,0.15)'; ctx.lineWidth=2;
-      ctx.beginPath(); ctx.moveTo(sx,sy); ctx.lineTo(sx - b.vx*5, sy - b.vy*3 - b.vz*2); ctx.stroke();
-    }
-    // ball
-    ctx.fillStyle='#f8fafc';
-    ctx.beginPath(); ctx.arc(sx,sy, 5, 0, Math.PI*2); ctx.fill();
-    // spin ring
-    ctx.strokeStyle='rgba(253,224,71,0.6)'; ctx.lineWidth=1;
-    ctx.beginPath(); ctx.arc(sx,sy, 6, 0, Math.PI*2); ctx.stroke();
+    if(b.alive){ ctx.strokeStyle='rgba(255,255,255,0.15)'; ctx.lineWidth=2; ctx.beginPath(); ctx.moveTo(sx,sy); ctx.lineTo(sx - b.vx*5, sy - b.vy*3 - b.vz*2); ctx.stroke(); }
+    ctx.fillStyle='#f8fafc'; ctx.beginPath(); ctx.arc(sx,sy,5,0,Math.PI*2); ctx.fill();
+    ctx.strokeStyle='rgba(253,224,71,0.6)'; ctx.lineWidth=1; ctx.beginPath(); ctx.arc(sx,sy,6,0,Math.PI*2); ctx.stroke();
     ctx.restore();
   }
-  function drawHUD(){
-    if(state.msgT>0 && state.msgT<999){
-      state.msgT -= dt;
-      if(state.msgT<=0) ui.msg.textContent='';
-    }
-  }
+  function drawHUD(){ if(state.msgT>0 && state.msgT<999){ state.msgT -= dt; if(state.msgT<=0) ui.msg.textContent=''; } }
   function drawChargeMeter(){
     if(!charge.active) return;
-    // compute current value (visual only)
-    const held = Math.min(cfg.chargeMax, (performance.now()/1000 - charge.t0));
-    const t = held/cfg.chargeMax;
-    const mul = cfg.chargeMinMul + (cfg.chargeMaxMul - cfg.chargeMinMul)*t;
-    charge.val = t;
-
+    const held=Math.min(cfg.chargeMax, nowTime()-charge.t0);
+    const t=held/cfg.chargeMax;
+    const mul=cfg.chargeMinMul + (cfg.chargeMaxMul - cfg.chargeMinMul)*t;
     if(charge.type==='serve'){
-      const w = 220, h=10;
-      const x = W/2 - w/2, y = H - 36;
-      ctx.save();
-      ctx.fillStyle='rgba(11,18,41,.8)'; ctx.fillRect(x, y, w, h);
-      ctx.fillStyle='#86efac'; ctx.fillRect(x, y, w*t, h);
-      ctx.fillStyle='rgba(230,237,243,.8)'; ctx.fillText(`Serve Power ×${mul.toFixed(2)}`, x, y-6);
-      ctx.restore();
+      const w=220,h=10,x=W/2 - w/2,y=H-36;
+      ctx.save(); ctx.fillStyle='rgba(11,18,41,.8)'; ctx.fillRect(x,y,w,h);
+      ctx.fillStyle='#86efac'; ctx.fillRect(x,y,w*t,h);
+      ctx.fillStyle='rgba(230,237,243,.8)'; ctx.fillText(`Serve Power ×${mul.toFixed(2)}`, x, y-6); ctx.restore();
     } else if(charge.type==='shot'){
-      // draw above player
-      const [sx,sy] = iso.toScreen(player.x, player.y, 0);
-      const w=120,h=8, x=sx-w/2, y=sy-72;
-      ctx.save();
-      ctx.fillStyle='rgba(11,18,41,.8)'; ctx.fillRect(x, y, w, h);
-      ctx.fillStyle='#86efac'; ctx.fillRect(x, y, w*t, h);
-      ctx.restore();
+      const [sx,sy]=iso.toScreen(player.x,player.y,0); const w=120,h=8,x=sx-w/2,y=sy-72;
+      ctx.save(); ctx.fillStyle='rgba(11,18,41,.8)'; ctx.fillRect(x,y,w,h);
+      ctx.fillStyle='#86efac'; ctx.fillRect(x,y,w*t,h); ctx.restore();
     }
   }
 
-  // --- Main loop ---
-  let last=performance.now()/1000, acc=0, dt=1/60;
-  function frame(){
-    const now=performance.now()/1000;
-    let delta = now - last; last = now;
-    delta = Math.min(0.05, Math.max(0, delta));
-    if(!state.paused){
-      acc += delta;
-      while(acc >= dt){
-        tick(dt);
-        acc -= dt;
-      }
-      draw();
-    }
-    requestAnimationFrame(frame);
+  // Helpers
+  function clampToOpponent(x,y,side){
+    const mx=halfW*(1-cfg.aimAssist), my=(halfL-0.8)*(1-cfg.aimAssist);
+    const tx=clamp(x,-mx,mx);
+    const ty=(side>0)? -Math.max(1.2, Math.min(my, Math.abs(y))) : Math.max(-my, Math.min(-1.2, y));
+    return [tx,ty];
+  }
+  function aimTo(sx,sy,tx,ty,zVel,speed){
+    const dx=tx-sx, dy=ty-sy, d=Math.hypot(dx,dy)||1; return {vx:(dx/d)*speed, vy:(dy/d)*speed, vz:zVel};
   }
 
-  function tick(dt){
-    handlePlayer(dt);
-    aiBrain.decide(dt);
-    updateBall(dt);
-    // clamp positions within halves
-    player.x = clamp(player.x, -halfW+0.4, halfW-0.4);
-    player.y = clamp(player.y, 0.7, halfL-0.6);
-    ai.x = clamp(ai.x, -halfW+0.4, halfW-0.4);
-    ai.y = clamp(ai.y, -halfL+0.6, -0.7);
+  // Loop
+  let last=nowTime(), acc=0, dt=1/60;
+  function frame(){ const now=nowTime(); let d=now-last; last=now; d=Math.min(0.05,Math.max(0,d));
+    if(!state.paused){ acc+=d; while(acc>=dt){ tick(dt); acc-=dt; } draw(); } requestAnimationFrame(frame); }
+  function tick(dtl){
+    handlePlayer(dtl);
+    aiBrain.decide(dtl);
+    updateBall(dtl);
+    // clamp halves
+    player.x=clamp(player.x,-halfW+0.4,halfW-0.4); player.y=clamp(player.y,0.7,halfL-0.6);
+    ai.x=clamp(ai.x,-halfW+0.4,halfW-0.4); ai.y=clamp(ai.y,-halfL+0.6,-0.7);
   }
 
-  // --- Init ---
-  updateScoreUI();
-  flashMsg("Hold SPACE to charge your first serve.", false);
+  // UI
+  function flashMsg(t,sticky=false){ ui.msg.textContent=t; state.msgT=sticky?999:3; }
+  updateScoreUI(); flashMsg("AI upgraded: serves on time, returns after bounce (real volley logic).");
   setupServe(+1);
   frame();
 })();
