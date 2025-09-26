@@ -1,0 +1,662 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Pixel Pickle — Isometric Singles (V1)</title>
+<style>
+  :root{
+    --bg:#0b1020; --hud:#0b1229; --ink:#e6edf3; --muted:#9aa4b2; --accent:#86efac; --warn:#f59e0b; --err:#ef4444;
+    --kitchen:#2c3357; --court:#1a2456; --lines:#f8fafc; --net:#cbd5e1;
+    --pixel-scale:3; /* SNES-ish chunky pixels */
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%;margin:0;background:radial-gradient(1200px 800px at 60% 30%,#0e1630 0,#0b1020 60%,#070a14 100%);color:var(--ink);font-family:ui-sans-serif,system-ui,Segoe UI,Roboto,Arial}
+  #wrap{display:grid;place-items:center;height:100%}
+  canvas{image-rendering: pixelated;image-rendering: crisp-edges;background:transparent;outline:1px solid #111827;border-radius:8px;box-shadow:0 8px 60px rgba(0,0,0,.45)}
+  #hud{position:fixed;inset:0;pointer-events:none;display:flex;align-items:flex-start;justify-content:center;padding-top:8px;gap:8px;font-weight:600}
+  .pill{pointer-events:auto;background:rgba(11,18,41,.7);backdrop-filter:blur(6px);border:1px solid rgba(255,255,255,.08);padding:8px 10px;border-radius:10px;display:flex;gap:10px;align-items:center}
+  .score{font-family:monospace;font-size:18px;letter-spacing:1px}
+  .serve{padding:2px 6px;border-radius:6px;background:#0c1a3a;border:1px solid rgba(255,255,255,.06);font-size:12px}
+  .msg{position:fixed;bottom:12px;left:50%;transform:translateX(-50%);background:rgba(11,18,41,.75);border:1px solid rgba(255,255,255,.08);padding:8px 12px;border-radius:10px;font-size:13px}
+  .legend{position:fixed;right:10px;bottom:10px;background:rgba(11,18,41,.8);border:1px solid rgba(255,255,255,.08);padding:8px 10px;border-radius:10px;font-size:12px;line-height:1.5}
+  .paused{position:fixed;inset:0;display:none;place-items:center;background:rgba(3,6,15,.6)}
+  .paused.show{display:grid}
+  .panel{background:rgba(11,18,41,.9);border:1px solid rgba(255,255,255,.1);padding:18px 22px;border-radius:12px;max-width:520px}
+  .panel h2{margin:0 0 6px 0}
+  .small{font-size:12px;color:var(--muted)}
+</style>
+</head>
+<body>
+<div id="wrap"><canvas id="game" width="1000" height="650"></canvas></div>
+
+<div id="hud">
+  <div class="pill score">
+    <span id="pScore">0</span>&nbsp;—&nbsp;<span id="aScore">0</span>
+    <span id="call" style="margin-left:10px;color:var(--muted)"></span>
+    <span id="serve" class="serve" title="Serving side"></span>
+  </div>
+</div>
+
+<div class="legend">
+  <b>Controls</b><br/>
+  Move: W/S/A/D &nbsp;•&nbsp; Dash: Shift<br/>
+  Shots: J=Drive, K=Dink, L=Lob, I=Drop<br/>
+  Spin: hold Q=Backspin, E=Topspin<br/>
+  Pause: P
+</div>
+
+<div class="msg" id="msg">Classic singles • Side-out to 11 (win by 2) • Indoor • Kitchen enforced</div>
+
+<div class="paused" id="paused">
+  <div class="panel">
+    <h2>Paused</h2>
+    <div class="small">P to resume • Light aim assist ON • Realistic indoor hits</div>
+    <ul>
+      <li>Arcade 2/5 feel: drag, spin curve, subtle wiffle wobble</li>
+      <li>Kitchen volley faults auto-called</li>
+      <li>Quick Match vs “Balanced” AI</li>
+    </ul>
+    <div class="small">V1 • © You</div>
+  </div>
+</div>
+
+<script>
+(() => {
+  // --- Config (meters & physics) ---
+  const cfg = {
+    courtW: 6.10,     // width (m)
+    courtL: 13.41,    // length (m), net at y=0, player at +y
+    kitchen: 2.13,    // 7 ft (m)
+    netH: 0.872,      // ~34.3 in at center (m)
+    serveToWin: 11,   // classic race
+    g: 13.0,          // gravity in our scaled units (arcade-tuned)
+    drag: 0.9,        // linear-ish drag factor per second (applied as exp decay)
+    spinZ: 7.5,       // topspin/backspin influence on vertical arc (m/s^2 per spin unit)
+    sideSpinK: 1.6,   // sidespin lateral drift gain
+    wobbleAmpDeg: 3.0,// max wobble at high speed (degrees)
+    wobbleFreq: 6.0,  // Hz
+    dashBoost: 1.4,   // dash multiplier
+    dashDur: 0.4,     // seconds
+    staminaMax: 100,  // units
+    staminaCost: 35,  // per dash
+    staminaRegen: 16, // per sec
+    aimAssist: 0.28,  // nudges target inward (0=no assist)
+    pixelScale: parseInt(getComputedStyle(document.documentElement).getPropertyValue('--pixel-scale')) || 3
+  };
+
+  // --- Canvas & projection ---
+  const canvas = document.getElementById('game');
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width, H = canvas.height;
+
+  // Isometric projection
+  const iso = {
+    tileW: 52, tileH: 26, zScale: 28,
+    toScreen(x, y, z=0) {
+      const sx = (x - y) * this.tileW/2 + W/2;
+      const sy = (x + y) * this.tileH/2 + H*0.48 - z * this.zScale;
+      return [sx, sy];
+    }
+  };
+
+  // World bounds
+  const halfL = cfg.courtL/2, halfW = cfg.courtW/2;
+
+  // --- Audio (realistic-ish) ---
+  const audio = (() => {
+    const ctxA = new (window.AudioContext || window.webkitAudioContext)();
+    let samples = {};
+    // Attempt to load optional files if present
+    const tryLoad = async (name, url) => {
+      try {
+        const res = await fetch(url);
+        if(!res.ok) throw 0;
+        const arr = await res.arrayBuffer();
+        samples[name] = await ctxA.decodeAudioData(arr);
+      } catch(e) { /* fallback synth used */ }
+    };
+    // kick off async loads (non-blocking)
+    tryLoad('hit1','/audio/hit1.mp3'); tryLoad('hit2','/audio/hit2.mp3'); tryLoad('bounce1','/audio/bounce1.mp3');
+
+    const playBuf = (buf, gain=0.7, rate=1.0) => {
+      const src = ctxA.createBufferSource(); src.buffer = buf; src.playbackRate.value = rate;
+      const g = ctxA.createGain(); g.gain.value = gain;
+      src.connect(g).connect(ctxA.destination); src.start();
+    };
+    const synthPop = (type='hit', v=1.0) => {
+      // filtered noise + short sine to mimic plastic pop
+      const now = ctxA.currentTime;
+      const noise = ctxA.createBufferSource();
+      const nBuf = ctxA.createBuffer(1, ctxA.sampleRate*0.06, ctxA.sampleRate);
+      const data = nBuf.getChannelData(0);
+      for(let i=0;i<data.length;i++){ data[i] = (Math.random()*2-1) * 0.35; }
+      noise.buffer = nBuf;
+
+      const biq = ctxA.createBiquadFilter(); biq.type='bandpass'; biq.frequency.value = (type==='bounce')? 900: 1300; biq.Q.value=2.5;
+
+      const osc = ctxA.createOscillator(); osc.type='sine'; osc.frequency.value = (type==='bounce')? 200: 260;
+      const oGain = ctxA.createGain(); oGain.gain.setValueAtTime(0.6*v, now);
+      oGain.gain.exponentialRampToValueAtTime(0.001, now+0.06);
+
+      const nGain = ctxA.createGain(); nGain.gain.setValueAtTime(0.5*v, now);
+      nGain.gain.exponentialRampToValueAtTime(0.001, now+0.05);
+
+      noise.connect(biq).connect(nGain); osc.connect(oGain);
+      const mix = ctxA.createGain(); mix.gain.value=1.0;
+      nGain.connect(mix); oGain.connect(mix); mix.connect(ctxA.destination);
+      noise.start(); noise.stop(now+0.06); osc.start(); osc.stop(now+0.06);
+    };
+    return {
+      hit:(v=1)=> samples.hit1? playBuf(samples.hit1, 0.6*v, 1.0+Math.random()*0.05): synthPop('hit', v),
+      hit2:(v=1)=> samples.hit2? playBuf(samples.hit2, 0.6*v, 1.0+Math.random()*0.05): synthPop('hit', v*0.9),
+      bounce:(v=1)=> samples.bounce1? playBuf(samples.bounce1, 0.5*v, 1.0+Math.random()*0.08): synthPop('bounce', v*0.9),
+      resume:()=> ctxA.resume?.()
+    };
+  })();
+
+  // --- Input ---
+  const keys = new Set();
+  window.addEventListener('keydown', (e)=>{ keys.add(e.key.toLowerCase()); if(e.key==='p'||e.key==='P'){togglePause();} });
+  window.addEventListener('keyup',   (e)=>{ keys.delete(e.key.toLowerCase()); });
+
+  // --- Entities ---
+  function makePlayer(side=1){ // side: +1 (bottom) is human, -1 (top) is AI
+    return {
+      x:0, y: side*(halfL-0.8), z:0,
+      vx:0, vy:0, speed: 6.0, // m/s
+      dashT:0, stamina: cfg.staminaMax, serving:true,
+      width:0.55, depth:0.35, reach:0.85, // body footprint & hit reach (m)
+      lastHitTime:0
+    };
+  }
+  const player = makePlayer(+1);
+  const ai = makePlayer(-1); ai.serving = false;
+
+  // Ball
+  const ball = {
+    x:0, y:0, z:1.0,
+    vx:0, vy:0, vz:0,
+    spinTB:0, sideSpin:0,
+    alive:false, lastBounceY:null, wobblePhase: Math.random()*Math.PI*2,
+    bouncesSinceServe:0
+  };
+
+  // Match state
+  const state = {
+    pScore:0, aScore:0, serving:+1, // +1 player, -1 ai
+    rally:false, paused:false, msgT:3.0,
+  };
+
+  const ui = {
+    pScore: document.getElementById('pScore'),
+    aScore: document.getElementById('aScore'),
+    call: document.getElementById('call'),
+    serve: document.getElementById('serve'),
+    msg: document.getElementById('msg'),
+    paused: document.getElementById('paused')
+  };
+
+  // --- Serving / rally management ---
+  function startRally(withSide=state.serving){
+    state.rally = true;
+    ball.alive = true;
+    ball.bouncesSinceServe = 0;
+    ball.spinTB = 0; ball.sideSpin = 0;
+    ball.z = 1.0;
+    const s = (withSide>0)? player: ai;
+    // simple indoor serve: diagonal-ish toward receiver half, must bounce (enforced by two-bounce rule simplified)
+    ball.x = s.x; ball.y = s.y + (withSide>0? -0.5: +0.5);
+    const targetX = (Math.random()*0.6 - 0.3);
+    const targetY = -withSide*(halfL - 2.4);
+    const v = aimTo(ball.x, ball.y, targetX, targetY, 1.4, 7.5);
+    ball.vx=v.vx; ball.vy=v.vy; ball.vz=v.vz;
+  }
+  function stopRally(){ state.rally=false; ball.alive=false; }
+
+  // --- Aiming helper (light assist) ---
+  function clampToOpponent(x, y, side){ // side: +1 player aiming to -1 half
+    const tgtMarginX = halfW * (1.0 - cfg.aimAssist); // inward
+    const tgtMarginY = (halfL-0.8) * (1.0 - cfg.aimAssist);
+    const tx = Math.max(-tgtMarginX, Math.min(tgtMarginX, x));
+    const ty = (side>0)? -Math.max(1.2, Math.min(tgtMarginY, Math.abs(y))) : Math.max(-tgtMarginY, Math.min(-1.2, y));
+    return [tx, ty];
+  }
+  // Compute velocity to roughly land near target (arc = zVel)
+  function aimTo(sx, sy, tx, ty, zVel, speed){
+    const dx = tx - sx, dy = ty - sy;
+    const dist = Math.hypot(dx,dy);
+    const dirx = dx / (dist||1), diry = dy / (dist||1);
+    const vx = dirx * speed, vy = diry * speed, vz = zVel;
+    return {vx,vy,vz};
+  }
+
+  // --- Simple AI ---
+  const aiBrain = {
+    react: 0.08, // baseline reaction delay (s)
+    errCone: 0.09, // aim error radians
+    tSince: 0,
+    decide(dt){
+      this.tSince += dt;
+      // move toward predicted land point
+      const pred = predictLanding(1.2);
+      const targetY = (pred && pred.y<0)? Math.max(-halfL+0.6, Math.min(-0.7, pred.y+0.8)) : -2.5;
+      const targetX = (pred)? Math.max(-halfW+0.4, Math.min(halfW-0.4, pred.x)) : 0;
+      steerTo(ai, targetX, targetY, dt);
+
+      // hit decision
+      if(!ball.alive) return;
+      const d = dist2d(ai.x - ball.x, ai.y - ball.y);
+      const canReach = d < (ai.reach*ai.reach) && ball.z <= 1.6;
+      if(canReach && (performance.now()/1000 - ai.lastHitTime) > (this.react + 0.03*Math.random())){
+        // choose shot by context
+        let shot = 'drive';
+        const youFar = player.y > 3.2;
+        const youUp = player.y < 2.5;
+        if(youFar && Math.random()<0.5) shot='drop';
+        else if(ball.y > -1.0 && Math.random()<0.4) shot='dink';
+        else if(Math.random()<0.15) shot='lob';
+
+        const spin = (shot==='drive')? +0.6 : (shot==='dink'? -0.3 : (shot==='drop'? +0.2 : -0.2)); // topspin positive
+        performShot(ai, -1, shot, spin, (Math.random()<0.25)? (Math.random()<0.5?-0.4:0.4): 0);
+        ai.lastHitTime = performance.now()/1000;
+      }
+    }
+  };
+
+  function steerTo(p, tx, ty, dt){
+    const dashMul = (p.dashT>0)? cfg.dashBoost : 1.0;
+    const sp = p.speed * dashMul;
+    const dx = tx - p.x, dy = ty - p.y;
+    const mag = Math.hypot(dx,dy);
+    if(mag>0.01){
+      p.vx = (dx/mag) * sp;
+      p.vy = (dy/mag) * sp;
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+    }
+  }
+
+  // --- Player input & shots ---
+  function handlePlayer(dt){
+    const p = player;
+    let mx=0,my=0;
+    if(keys.has('a')) mx -= 1;
+    if(keys.has('d')) mx += 1;
+    if(keys.has('w')) my -= 1;
+    if(keys.has('s')) my += 1;
+    const mag = Math.hypot(mx,my);
+    const dash = keys.has('shift') && p.stamina>=cfg.staminaCost && p.dashT<=0;
+    if(dash){ p.dashT = cfg.dashDur; p.stamina -= cfg.staminaCost; }
+    const dashMul = (p.dashT>0)? cfg.dashBoost : 1.0;
+    if(mag>0){
+      const sp = p.speed * dashMul;
+      p.x += (mx/mag)*sp*dt;
+      p.y += (my/mag)*sp*dt;
+    } else {
+      p.vx*=0.8; p.vy*=0.8;
+    }
+    // keep in bounds (player half)
+    p.x = Math.max(-halfW+0.4, Math.min(halfW-0.4, p.x));
+    p.y = Math.max(0.7, Math.min(halfL-0.6, p.y));
+
+    // stamina
+    if(p.dashT>0) p.dashT -= dt; else p.stamina = Math.min(cfg.staminaMax, p.stamina + cfg.staminaRegen*dt);
+
+    // shot input
+    const spinTB = (keys.has('e')? +1 : 0) + (keys.has('q')? -1 : 0); // topspin positive
+    if(once('j')) doShot('drive', spinTB, 0);
+    if(once('k')) doShot('dink',  spinTB, 0);
+    if(once('l')) doShot('lob',   spinTB, 0);
+    if(once('i')) doShot('drop',  spinTB, 0);
+  }
+  const pressed = new Set();
+  function once(k){ if(keys.has(k) && !pressed.has(k)){ pressed.add(k); return true;} if(!keys.has(k)) pressed.delete(k); return false; }
+
+  function doShot(type, spinTB, sideSpin=0){
+    if(!ball.alive) return;
+    const d2 = dist2d(player.x - ball.x, player.y - ball.y);
+    const canReach = d2 < (player.reach*player.reach) && ball.z <= 1.6;
+    if(!canReach) return;
+
+    performShot(player, +1, type, spinTB*0.8, sideSpin);
+  }
+
+  function performShot(p, side, type, spinTB, sideSpin){
+    // Kitchen fault on volley?
+    const inKitchen = (p.y < cfg.kitchen + 0.01);
+    const isVolley = (ball.z > 0.02);
+    if(isVolley && inKitchen){
+      pointTo(-side); // fault
+      flashMsg("Kitchen fault (volley) — point to opponent", true);
+      return;
+    }
+    // Aim target with light assist: toward opponent half, nudge inward
+    const rawTX = (Math.random()*halfW*1.4 - halfW*0.7);
+    const rawTY = -side*(halfL - 1.2);
+    const [tx,ty] = clampToOpponent(rawTX, rawTY, side);
+
+    let speed=7.0, zVel=1.4;
+    if(type==='drive'){ speed=8.6; zVel=1.1; }
+    else if(type==='dink'){ speed=4.2; zVel=0.7; }
+    else if(type==='lob'){ speed=6.8; zVel=2.1; spinTB = -Math.abs(spinTB)||-0.4; }
+    else if(type==='drop'){ speed=6.4; zVel=1.5; spinTB = Math.max(spinTB, +0.35); }
+
+    // compute velocity vector to target
+    const a = aimTo(ball.x, ball.y, tx, ty, zVel, speed);
+    // add small randomization & skill
+    const err = (side>0)? 0.05 : aiBrain.errCone;
+    const ang = (Math.random()*2-1)*err;
+    const cs=Math.cos(ang), sn=Math.sin(ang);
+    const vx = a.vx*cs - a.vy*sn, vy=a.vx*sn + a.vy*cs;
+
+    ball.vx = vx; ball.vy = vy; ball.vz = a.vz;
+    ball.spinTB = clamp(spinTB, -1, 1);
+    ball.sideSpin = clamp(sideSpin, -1, 1);
+    audio.hit(0.95);
+    if(side>0) player.lastHitTime = performance.now()/1000; else ai.lastHitTime = performance.now()/1000;
+  }
+
+  // --- Physics update ---
+  function updateBall(dt){
+    if(!ball.alive) return;
+    // drag (exponential)
+    const dragF = Math.exp(-cfg.drag*dt);
+    ball.vx *= dragF; ball.vy *= dragF; ball.vz = (ball.vz - cfg.g*dt)*dragF;
+
+    // spin effects
+    ball.vz += (-cfg.spinZ * ball.spinTB) * dt;               // topspin dips, backspin floats
+    ball.vx += (cfg.sideSpinK * ball.sideSpin) * dt;          // sidespin lateral drift
+
+    // wobble (heading jitter based on speed)
+    ball.wobblePhase += cfg.wobbleFreq * dt;
+    const vxy = Math.hypot(ball.vx, ball.vy);
+    const wobbleAmp = (cfg.wobbleAmpDeg*Math.PI/180) * Math.min(1, vxy/9.0);
+    const wobX = Math.cos(ball.wobblePhase)*wobbleAmp;
+    const wobY = Math.sin(ball.wobblePhase)*wobbleAmp*0.7;
+    // rotate velocity slightly by wobble
+    const cwx=Math.cos(wobX), swx=Math.sin(wobX);
+    const cwy=Math.cos(wobY), swy=Math.sin(wobY);
+    let vx=ball.vx, vy=ball.vy;
+    // apply small successive rotations
+    let nvx = vx*cwx - vy*swx;
+    let nvy = vx*swx + vy*cwx;
+    nvx = nvx*cwy - nvy*swy;
+    nvy = nvx*swy + nvy*cwy;
+    ball.vx = nvx; ball.vy = nvy;
+
+    // integrate
+    ball.x += ball.vx*dt; ball.y += ball.vy*dt; ball.z += ball.vz*dt;
+
+    // net collision (at y≈0 plane, thin band)
+    if( (ball.y - ball.vy*dt) * ball.y <= 0 ){ // crossed net plane
+      const zAtPlane = ball.z - ball.vz*dt * (Math.abs((ball.y)/(ball.vy||1e-6)));
+      if(zAtPlane <= cfg.netH + 0.03 && Math.abs(ball.x) < halfW*0.55){
+        // clips tape: reflect vy and dampen
+        ball.y = (ball.vy>0? 0.02 : -0.02);
+        ball.vy *= -0.35; ball.vx *= 0.85; ball.vz *= 0.7;
+        audio.bounce(0.8);
+      }
+    }
+
+    // ground bounce
+    if(ball.z <= 0){
+      ball.z = 0;
+      audio.bounce(0.9);
+      ball.vz = Math.abs(ball.vz) * 0.52; // restitution
+      // spin-skid: backspin skids forward less; topspin grips & kicks forward
+      const skid = clamp(1 - 0.25*ball.spinTB, 0.7, 1.25);
+      ball.vx *= 0.88 * skid; ball.vy *= 0.88 * skid;
+      // Random tiny kick on bounce for flavor
+      ball.vx += (Math.random()*2-1)*0.12; ball.vy += (Math.random()*2-1)*0.12;
+
+      // scoring & two-bounce flow simplified
+      ball.bouncesSinceServe++;
+      // out of bounds check after bounce
+      const outX = Math.abs(ball.x) > halfW+0.05;
+      const outY = Math.abs(ball.y) > halfL+0.05;
+      if(outX || outY){
+        pointTo( (ball.y>0)? -1 : +1 ); // if it bounced out on your side → opponent point
+        return;
+      }
+    }
+
+    // Out without bounce (long/wide)
+    if(Math.abs(ball.x) > halfW+0.9 || Math.abs(ball.y) > halfL+0.9 || ball.z>6){
+      // Went way out in air → point to opponent of last side ball was heading to
+      pointTo( (ball.y>0)? -1 : +1 );
+      return;
+    }
+
+    // Check paddle reach for AI auto-return is handled in AI tick and player input
+  }
+
+  // Predict approximate landing (next ground contact)
+  function predictLanding(horizon=1.5){
+    if(!ball.alive) return null;
+    let x=ball.x, y=ball.y, z=ball.z, vx=ball.vx, vy=ball.vy, vz=ball.vz;
+    const dt=0.02; let t=0;
+    while(t<horizon){
+      // rough drag
+      const dragF = Math.exp(-cfg.drag*dt);
+      vx*=dragF; vy*=dragF; vz=(vz - cfg.g*dt)*dragF;
+      vz += (-cfg.spinZ * ball.spinTB) * dt;
+      vx += (cfg.sideSpinK * ball.sideSpin) * dt;
+      x+=vx*dt; y+=vy*dt; z+=vz*dt; t+=dt;
+      if(z<=0) return {x,y,t};
+    }
+    return null;
+  }
+
+  // --- Scoring ---
+  function pointTo(side){ // +1 player scores, -1 ai scores
+    stopRally();
+    const server = state.serving;
+    const hitter = side;
+    if(hitter === server){
+      if(side>0) state.pScore++; else state.aScore++;
+      audio.hit2(0.9);
+    } else {
+      // side-out (no point), switch server
+      state.serving *= -1;
+    }
+    updateScoreUI();
+    const win = checkWin();
+    if(!win){
+      // next serve by current server
+      setTimeout(()=> startRally(state.serving), 400);
+    }
+  }
+  function checkWin(){
+    const p=state.pScore, a=state.aScore;
+    const lead = Math.abs(p-a);
+    if((p>=cfg.serveToWin || a>=cfg.serveToWin) && lead>=2){
+      flashMsg( (p>a? "You win!":"AI wins!") + " — press P to play again", true);
+      state.paused = true; ui.paused.classList.add('show');
+      return true;
+    }
+    return false;
+  }
+  function updateScoreUI(){
+    ui.pScore.textContent = state.pScore;
+    ui.aScore.textContent = state.aScore;
+    ui.serve.textContent = (state.serving>0? "Your serve":"AI serve");
+    ui.call.textContent = `(${state.pScore}–${state.aScore})`;
+  }
+
+  function flashMsg(text, sticky=false){
+    ui.msg.textContent = text;
+    state.msgT = sticky? 999: 3.0;
+  }
+
+  // --- Utils ---
+  const clamp = (v,a,b)=>Math.max(a,Math.min(b,v));
+  const dist2d = (dx,dy)=> dx*dx+dy*dy;
+
+  // --- Pause ---
+  function togglePause(){
+    state.paused = !state.paused;
+    ui.paused.classList.toggle('show', state.paused);
+    if(!state.paused) audio.resume?.();
+  }
+  window.togglePause = togglePause;
+
+  // --- Render ---
+  function draw(){
+    ctx.clearRect(0,0,W,H);
+    drawCourt();
+    drawNet();
+    drawShadow(ball);
+    drawPlayer(ai, false);
+    drawPlayer(player, true);
+    if(ball.alive) drawBall(ball);
+    drawHUD();
+  }
+
+  function drawCourt(){
+    // base: isometric rectangle with inner kitchen stripes
+    // corners (world)
+    const pad=0.0;
+    const corners = [
+      [-halfW,-halfL],[halfW,-halfL],[halfW,halfL],[-halfW,halfL]
+    ];
+    // fill court
+    ctx.beginPath();
+    corners.forEach(([x,y],i)=> {
+      const [sx,sy] = iso.toScreen(x,y,0);
+      if(i===0) ctx.moveTo(sx,sy); else ctx.lineTo(sx,sy);
+    });
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(26,36,86,0.95)'; ctx.fill();
+
+    // kitchen bands
+    drawBand(-cfg.kitchen, 0, 'rgba(44,51,87,0.95)');
+    drawBand(0, cfg.kitchen, 'rgba(44,51,87,0.95)');
+    // sidelines & baselines
+    ctx.strokeStyle = 'rgba(248,250,252,0.9)'; ctx.lineWidth=2;
+    ctx.beginPath();
+    corners.forEach(([x,y],i)=> {
+      const [sx,sy] = iso.toScreen(x,y,0);
+      if(i===0) ctx.moveTo(sx,sy); else ctx.lineTo(sx,sy);
+    });
+    ctx.closePath(); ctx.stroke();
+
+    // centerline (net plane projected)
+    const [sx1,sy1] = iso.toScreen(-halfW,0,0);
+    const [sx2,sy2] = iso.toScreen( halfW,0,0);
+    ctx.strokeStyle='rgba(203,213,225,0.4)'; ctx.lineWidth=1;
+    ctx.beginPath(); ctx.moveTo(sx1,sy1); ctx.lineTo(sx2,sy2); ctx.stroke();
+  }
+  function drawBand(y1, y2, color){
+    const pts = [[-halfW,y1],[halfW,y1],[halfW,y2],[-halfW,y2]];
+    ctx.beginPath();
+    pts.forEach(([x,y],i)=>{ const [sx,sy]=iso.toScreen(x,y,0); if(i===0) ctx.moveTo(sx,sy); else ctx.lineTo(sx,sy);});
+    ctx.closePath(); ctx.fillStyle=color; ctx.fill();
+  }
+  function drawNet(){
+    // net top tape
+    const [lx,ly] = iso.toScreen(-halfW,0,cfg.netH);
+    const [rx,ry] = iso.toScreen( halfW,0,cfg.netH);
+    ctx.strokeStyle = '#cbd5e1'; ctx.lineWidth=3;
+    ctx.beginPath(); ctx.moveTo(lx,ly); ctx.lineTo(rx,ry); ctx.stroke();
+    // posts (fake)
+    const postZ = cfg.netH+0.4;
+    [[-halfW,0],[halfW,0]].forEach(([x,y])=>{
+      const [sx,sy]=iso.toScreen(x,y,0), [sx2,sy2]=iso.toScreen(x,y,postZ);
+      ctx.strokeStyle='rgba(148,163,184,0.8)'; ctx.lineWidth=4;
+      ctx.beginPath(); ctx.moveTo(sx,sy); ctx.lineTo(sx2,sy2); ctx.stroke();
+    });
+  }
+  function drawPlayer(p, isHuman){
+    // body as pixel sprite block
+    const [sx,sy] = iso.toScreen(p.x, p.y, 0);
+    ctx.save();
+    ctx.translate(sx, sy);
+    ctx.fillStyle = isHuman? '#86efac' : '#60a5fa';
+    // head + body
+    const s = cfg.pixelScale;
+    ctx.fillRect(-4*s, -14*s, 8*s, 8*s); // head
+    ctx.fillRect(-5*s, -6*s, 10*s, 12*s); // torso
+    // paddle (simple)
+    ctx.fillStyle = '#fef08a';
+    ctx.fillRect(5*s, -8*s, 6*s, 3*s);
+    ctx.restore();
+
+    // stamina bar (human only)
+    if(isHuman){
+      ctx.save();
+      ctx.globalAlpha=0.8;
+      const [bx,by] = iso.toScreen(p.x, p.y, 0);
+      ctx.fillStyle='rgba(11,18,41,.7)'; ctx.fillRect(bx-30, by-60, 60, 6);
+      ctx.fillStyle='#86efac'; ctx.fillRect(bx-30, by-60, 60*(p.stamina/cfg.staminaMax), 6);
+      ctx.restore();
+    }
+  }
+  function drawShadow(b){
+    if(!b.alive) return;
+    const [sxGround, syGround] = iso.toScreen(b.x, b.y, 0);
+    const size = clamp(6 - b.z*1.8, 1.5, 6);
+    ctx.save(); ctx.globalAlpha=0.35; ctx.fillStyle='#000';
+    ctx.beginPath(); ctx.ellipse(sxGround, syGround, size*1.2, size*0.8, 0, 0, Math.PI*2); ctx.fill();
+    ctx.restore();
+  }
+  function drawBall(b){
+    const [sx,sy] = iso.toScreen(b.x, b.y, b.z);
+    ctx.save();
+    // trail
+    ctx.strokeStyle='rgba(255,255,255,0.15)'; ctx.lineWidth=2;
+    ctx.beginPath(); ctx.moveTo(sx,sy); ctx.lineTo(sx - b.vx*5, sy - b.vy*3 - b.vz*2); ctx.stroke();
+    // ball
+    ctx.fillStyle='#f8fafc';
+    ctx.beginPath(); ctx.arc(sx,sy, 5, 0, Math.PI*2); ctx.fill();
+    // spin rings
+    ctx.strokeStyle='rgba(253,224,71,0.6)'; ctx.lineWidth=1;
+    ctx.beginPath(); ctx.arc(sx,sy, 6, 0, Math.PI*2); ctx.stroke();
+    ctx.restore();
+  }
+  function drawHUD(){
+    if(state.msgT>0 && state.msgT<999){
+      state.msgT -= dt;
+      if(state.msgT<=0) ui.msg.textContent='';
+    }
+  }
+
+  // --- Main loop ---
+  let last=performance.now()/1000, acc=0, dt=1/60;
+  function frame(){
+    const now=performance.now()/1000;
+    let delta = now - last; last = now;
+    delta = Math.min(0.05, Math.max(0, delta));
+    if(!state.paused){
+      acc += delta;
+      while(acc >= dt){
+        tick(dt);
+        acc -= dt;
+      }
+      draw();
+    }
+    requestAnimationFrame(frame);
+  }
+
+  function tick(dt){
+    handlePlayer(dt);
+    aiBrain.decide(dt);
+    updateBall(dt);
+    // clamp positions within halves
+    player.x = clamp(player.x, -halfW+0.4, halfW-0.4);
+    player.y = clamp(player.y, 0.7, halfL-0.6);
+    ai.x = clamp(ai.x, -halfW+0.4, halfW-0.4);
+    ai.y = clamp(ai.y, -halfL+0.6, -0.7);
+  }
+
+  // --- Init ---
+  updateScoreUI();
+  flashMsg("Your serve — press any shot key (J/K/L/I) to rally after serve starts");
+  startRally(+1);
+
+  // Start loop
+  frame();
+})();
+</script>
+</body>
+</html>
