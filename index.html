@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"/>
-<title>PicklePop — First-Person (Canvas 2D) v0.1.7 (stable)</title>
+<title>PicklePop — FP Canvas (near-clip fixed, full build)</title>
 <style>
   html,body{margin:0;height:100%;background:#0a0f17;overscroll-behavior:none}
   canvas{display:block;width:100vw;height:100vh;background:linear-gradient(#20324f,#132237)}
@@ -40,11 +40,6 @@
     font:700 14px ui-sans-serif,system-ui;padding:10px 14px;border-radius:12px;border:0;cursor:pointer;
     background:#59a4ff;color:#071525;box-shadow:0 6px 18px rgba(0,0,0,.45)
   }
-  /* error overlay */
-  #err{
-    position:fixed;left:12px;bottom:12px;right:12px;background:rgba(255,80,80,.12);border:1px solid rgba(255,110,110,.4);
-    color:#ffd7d7;font:13px ui-sans-serif;padding:10px 12px;border-radius:10px;display:none;white-space:pre-wrap
-  }
 </style>
 </head>
 <body>
@@ -58,48 +53,35 @@
 <div id="fault">FAULT</div>
 <div id="nvzHint">NVZ VOLLEY = FAULT</div>
 <div id="help">
-  <b>Controls</b>: WASD move, Shift sprint, Ctrl crouch, mouse to look, <b>Space (hold)</b> serve, <b>Left-click</b> hit, Q/E paddle tilt, <b>R</b> reset.<br/>
-  <b>Rules</b>: Singles to 11 (win by 2). Kitchen volley faults. Diagonal serves.
+  <b>Controls</b>: WASD move, Shift sprint, Ctrl crouch, mouse to look, <b>Space (hold)</b> serve, <b>Left-click</b> hit, Q/E paddle tilt.<br/>
+  <b>Rules</b>: Singles to 11 (win by 2). Kitchen volley faults. Diagonal serves. No wind.
 </div>
 <div id="centerMsg">Click Play → move mouse to look • Space to serve</div>
 
 <div id="lock">
   <div style="font:800 28px/1 ui-sans-serif;">PicklePop — FP (2D)</div>
-  <div style="opacity:.9;max-width:60ch">Press <b>Play</b>. If the cursor doesn’t lock, click anywhere on the game to lock it.</div>
+  <div style="opacity:.9;max-width:60ch">Press <b>Play</b>. If the cursor doesn’t lock, click the canvas.</div>
   <button id="playBtn">Play</button>
 </div>
 
-<pre id="err"></pre>
-
 <script>
-/* =========================================================
-   Stable physics & guards
-========================================================= */
+/* ============================ Constants / Physics ============================ */
 const COURT_W=6.10, COURT_L=13.41, HALF_W=COURT_W/2, HALF_L=COURT_L/2;
 const NVZ=2.13, NET_H_CENTER=0.86, NET_H_SIDE=0.914;
 const BALL_R=0.037;
-const GRAV=-8.3;          // soft gravity → longer carry
-const DRAG_K=0.045;       // low drag → keeps speed
-const MAGNUS_K=0.0010;    // spin has some effect
+const GRAV=-8.3, DRAG_K=0.045, MAGNUS_K=0.0010;
 const DT_FIXED=1/120, SERVE_MIN=0.4, SERVE_MAX=1.0;
-const NET_CLEAR_BONUS = BALL_R*0.25;
-const MAX_SPEED = 26;     // safety clamp (m/s)
+const NET_CLEAR_BONUS=BALL_R*0.25;
+const MAX_SPEED=26;
 
 const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
 const lerp=(a,b,t)=>a+(b-a)*t;
+const len3=(x,y,z)=>Math.hypot(x,y,z);
 function netHeightAtX(x){ const t=clamp(Math.abs(x)/HALF_W,0,1); const s=t*t*(3-2*t); return lerp(NET_H_CENTER,NET_H_SIDE,s); }
-function normHold(t){ return (clamp(t,SERVE_MIN,SERVE_MAX)-SERVE_MIN)/(SERVE_MAX-SERVE_MIN); }
-function serveParams(tHoldNorm){ return { pow: lerp(10.5, 20.5, tHoldNorm), upk: lerp(0.44, 0.58, tHoldNorm) }; }
-function len3(x,y,z){ return Math.hypot(x,y,z); }
-function norm3(x,y,z){ const L=len3(x,y,z)||1; return [x/L,y/L,z/L]; }
 
-/* =========================================================
-   Canvas & camera
-========================================================= */
+/* ============================ Canvas / Camera ============================ */
 const canvas=document.getElementById('game'), ctx=canvas.getContext('2d');
-let W=innerWidth, H=innerHeight;
-function resize(){ W=canvas.width=innerWidth; H=canvas.height=innerHeight; }
-addEventListener('resize', resize); resize();
+let W=innerWidth,H=innerHeight; function resize(){ W=canvas.width=innerWidth; H=canvas.height=innerHeight; } addEventListener('resize',resize); resize();
 
 const cam={ x:0,y:1.7,z:-HALF_L+0.8, yaw:0, pitch:0, near:0.05, fov:75 };
 function focal(){ return 0.5*H/Math.tan((cam.fov*Math.PI/180)/2); }
@@ -111,106 +93,99 @@ function toCamSpace(x,y,z){
   let y2=cp*dy - sp*z1, z2=sp*dy + cp*z1;
   return {x:x1,y:y2,z:z2};
 }
-function project(x,y,z){
-  const p=toCamSpace(x,y,z); if(!p || !(p.z>cam.near)) return null;
-  const f=focal(); return { x:W/2 + (p.x/p.z)*f, y:H*0.58 - (p.y/p.z)*f, z:p.z };
-}
 
-/* =========================================================
-   Input & pointer lock
-========================================================= */
+/* ====== Near-plane clipping (fixes floor disappearing when looking up) ====== */
+function clipToNear(verts){ // verts are in camera space
+  const near=cam.near+1e-5; const out=[];
+  for(let i=0;i<verts.length;i++){
+    const a=verts[i], b=verts[(i+1)%verts.length];
+    const Ain=a.z>=near, Bin=b.z>=near;
+    if(Ain && Bin){ out.push(b); }
+    else if(Ain && !Bin){
+      const t=(near-a.z)/(b.z-a.z);
+      out.push({x:a.x+t*(b.x-a.x), y:a.y+t*(b.y-a.y), z:near});
+    }else if(!Ain && Bin){
+      const t=(near-a.z)/(b.z-a.z);
+      out.push({x:a.x+t*(b.x-a.x), y:a.y+t*(b.y-a.y), z:near});
+      out.push(b);
+    }
+  }
+  return out;
+}
+function fillWorldQuad(p0,p1,p2,p3, fill){
+  const f=focal();
+  const verts=[p0,p1,p2,p3].map(v=>toCamSpace(v[0],v[1],v[2]));
+  const clipped=clipToNear(verts); if(clipped.length<3) return;
+  ctx.beginPath();
+  for(let i=0;i<clipped.length;i++){
+    const p=clipped[i], sx=W/2+(p.x/p.z)*f, sy=H*0.58-(p.y/p.z)*f;
+    if(i===0) ctx.moveTo(sx,sy); else ctx.lineTo(sx,sy);
+  }
+  ctx.closePath(); ctx.fillStyle=fill; ctx.fill();
+}
+function project(x,y,z){ const p=toCamSpace(x,y,z); if(p.z<=cam.near) return null; const f=focal(); return {x:W/2+(p.x/p.z)*f, y:H*0.58-(p.y/p.z)*f, z:p.z}; }
+
+/* ============================ Input & Pointer Lock ============================ */
 let pointerLocked=false;
 const lockUI=document.getElementById('lock'), playBtn=document.getElementById('playBtn'), centerMsg=document.getElementById('centerMsg');
-playBtn.onclick=()=>{ lockUI.style.display='none'; centerMsg.style.display=''; try{ canvas.requestPointerLock(); }catch(e){} };
-document.addEventListener('pointerlockchange', ()=>{ pointerLocked=(document.pointerLockElement===canvas); centerMsg.style.display=pointerLocked?'none':''; });
-document.addEventListener('pointerlockerror', ()=>{ pointerLocked=false; centerMsg.textContent='Click the game to lock cursor'; lockUI.style.display='none'; });
-canvas.addEventListener('click', ()=>{ if(!pointerLocked) try{ canvas.requestPointerLock(); }catch(e){} });
+playBtn.onclick=()=>{ lockUI.style.display='none'; centerMsg.style.display=''; canvas.requestPointerLock?.(); };
+document.addEventListener('pointerlockchange',()=>{ pointerLocked=(document.pointerLockElement===canvas); centerMsg.style.display=pointerLocked?'none':''; });
+canvas.addEventListener('click',()=>{ if(!pointerLocked) canvas.requestPointerLock?.(); });
 
 const keys=new Set();
-addEventListener('keydown', e=>{
-  keys.add(e.code);
-  if(e.code==='Space') beginServeCharge();
-  if(e.code==='KeyR') hardReset();
-  if(e.code==='Tab') e.preventDefault();
-});
-addEventListener('keyup', e=>{ keys.delete(e.code); if(e.code==='Space') releaseServe(); });
-addEventListener('mousemove', e=>{
+addEventListener('keydown',e=>{ keys.add(e.code); if(e.code==='Space') beginServeCharge(); if(e.code==='Tab') e.preventDefault(); });
+addEventListener('keyup',e=>{ keys.delete(e.code); if(e.code==='Space') releaseServe(); });
+addEventListener('mousemove',e=>{
   if(!pointerLocked) return;
   cam.yaw -= e.movementX*0.0025;
-  cam.pitch = clamp(cam.pitch - e.movementY*0.0020, -0.9, 0.9);
+  cam.pitch = clamp(cam.pitch - e.movementY*0.0020, -0.85, 0.85);
 });
 
-/* =========================================================
-   HUD / error overlay
-========================================================= */
+/* ============================ HUD refs ============================ */
 const hud={ pScore:document.getElementById('pScore'), aiScore:document.getElementById('aiScore'), serverPill:document.getElementById('serverPill'),
-            sidePill:document.getElementById('sidePill'), lastMsg:document.getElementById('lastMsg'), fault:document.getElementById('fault'),
-            nvz:document.getElementById('nvzHint') };
-const errBox=document.getElementById('err');
-function showErr(msg){ errBox.textContent=msg; errBox.style.display='block'; }
-window.addEventListener('error', e=>showErr(`⚠️ ${e.message}\n${e.filename}:${e.lineno}:${e.colno}`));
+            sidePill:document.getElementById('sidePill'), lastMsg:document.getElementById('lastMsg'),
+            fault:document.getElementById('fault'), nvz:document.getElementById('nvzHint') };
 
-/* =========================================================
-   Entities
-========================================================= */
+/* ============================ Entities / State ============================ */
 const player={ x:0,z:-HALF_L+0.8, speed:5.5, sprint:8.0, crouch:0, tilt:0 };
 const ai={ x:0,z:HALF_L-1.6, speed:5.2, cool:0 };
-
-const ball=makeBall();
-
-function makeBall(){ return { x:0,y:1.0,z:-HALF_L+0.5, vx:0,vy:0,vz:0, ox:0,oy:0,oz:0,
+const ball={ x:0,y:1.0,z:-HALF_L+0.5, vx:0,vy:0,vz:0, ox:0,oy:0,oz:0,
   lastZ:-HALF_L+0.5, bouncesSinceServe:0, lastHitter:'none', inPlay:false, serving:'player',
-  serveSide:'right', awaitingServe:true, sideNow:'player', groundBouncesSinceSide:0 }; }
-
-/* =========================================================
-   Scoring / serve state
-========================================================= */
+  serveSide:'right', awaitingServe:true, sideNow:'player', groundBouncesSinceSide:0 };
+let serveHold=0;
 const score={ player:0, ai:0 };
+
+/* ============================ Scoring / Serve ============================ */
 function updateHUD(){ hud.pScore.textContent=score.player; hud.aiScore.textContent=score.ai;
   hud.serverPill.textContent=`Serve: ${ball.serving==='player'?'You':'AI'}`;
-  hud.sidePill.textContent=ball.serveSide==='right'?'Right':'Left'; }
-
+  hud.sidePill.textContent=ball.serveSide==='right'?'Right':'Left';
+}
 function resetForServe(serving){
   ball.serving=serving; ball.awaitingServe=true; ball.inPlay=false; ball.bouncesSinceServe=0;
   ball.vx=ball.vy=ball.vz=0; ball.ox=ball.oy=ball.oz=0; ball.groundBouncesSinceSide=0; ball.sideNow=(serving==='player'?'player':'ai');
   const s=((serving==='player'?score.player:score.ai)%2===0)?'right':'left'; ball.serveSide=s; updateHUD();
 
-  if(serving==='player'){
-    player.x=(s==='right'?1.0:-1.0); player.z=-HALF_L+1.2;
-    ai.x=0; ai.z=HALF_L-1.6;
-  }else{
-    player.x=0; player.z=-HALF_L+1.6;
-    ai.x=(s==='right'?-1.0:1.0); ai.z=HALF_L-1.2;
-  }
-  const bx=(serving==='player')?(s==='right'?1.0:-1.0):(s==='right'?-1.0:1.0);
-  const bz=(serving==='player')?(player.z+.4):(ai.z-.4);
-  ball.x=bx; ball.y=1.0; ball.z=bz; ball.lastZ=bz;
+  if(serving==='player'){ player.x=(s==='right'?1.0:-1.0); player.z=-HALF_L+1.2; ai.x=0; ai.z=HALF_L-1.6; }
+  else{ player.x=0; player.z=-HALF_L+1.6; ai.x=(s==='right'?-1.0:1.0); ai.z=HALF_L-1.2; }
+
+  ball.x=(serving==='player')?(s==='right'?1.0:-1.0):(s==='right'?-1.0:1.0);
+  ball.y=1.0; ball.z=(serving==='player')?(player.z+.4):(ai.z-.4); ball.lastZ=ball.z;
   cam.x=player.x; cam.z=player.z; cam.y=1.7;
   hud.lastMsg.textContent=`${serving==='player'?'Your':'AI'} serve — ${s} side`;
 }
-function hardReset(){ Object.assign(ball, makeBall()); score.player=0; score.ai=0; errBox.style.display='none'; resetForServe('player'); }
 resetForServe('player');
 
-/* =========================================================
-   Player movement / tilt
-========================================================= */
+/* ============================ Player / Movement ============================ */
 function updatePlayer(dt){
   const targetC=keys.has('ControlLeft')?1:0; player.crouch+=(targetC-player.crouch)*Math.min(1,dt*12);
   cam.y=1.7 - player.crouch*0.5;
 
-  let mx=0,mz=0;
-  if(keys.has('KeyW')) mz+=1;
-  if(keys.has('KeyS')) mz-=1;
-  if(keys.has('KeyA')) mx-=1;
-  if(keys.has('KeyD')) mx+=1;
-  if(mx||mz){ const inv=1/Math.hypot(mx,mz); mx*=inv;mz*=inv; }
-  const spd=keys.has('ShiftLeft')?player.sprint:player.speed;
-  const cy=Math.cos(cam.yaw), sy=Math.sin(cam.yaw);
-  const vx = mx*cy + mz*sy;
-  const vz = -mx*sy + mz*cy;
-  player.x += vx*spd*dt; player.z += vz*spd*dt;
-  player.x=clamp(player.x,-HALF_W+0.35,HALF_W-0.35);
-  player.z=clamp(player.z,-HALF_L+0.4,-0.2);
+  let mx=0,mz=0; if(keys.has('KeyW')) mz+=1; if(keys.has('KeyS')) mz-=1; if(keys.has('KeyA')) mx-=1; if(keys.has('KeyD')) mx+=1;
+  if(mx||mz){ const inv=1/Math.hypot(mx,mz); mx*=inv; mz*=inv; }
+  const spd=keys.has('ShiftLeft')?player.sprint:player.speed, cy=Math.cos(cam.yaw), sy=Math.sin(cam.yaw);
+  const vx = mx*cy + mz*sy, vz = -mx*sy + mz*cy;
+  player.x=clamp(player.x + vx*spd*dt, -HALF_W+0.35, HALF_W-0.35);
+  player.z=clamp(player.z + vz*spd*dt, -HALF_L+0.4, -0.2);
   cam.x=player.x; cam.z=player.z;
 
   if(keys.has('KeyQ')) player.tilt+=dt*0.7;
@@ -218,10 +193,10 @@ function updatePlayer(dt){
   player.tilt=clamp(player.tilt,-.22,.22);
 }
 
-/* =========================================================
-   Serve
-========================================================= */
-let serveHold=0;
+/* ============================ Serve ============================ */
+function normHold(t){ return (clamp(t,SERVE_MIN,SERVE_MAX)-SERVE_MIN)/(SERVE_MAX-SERVE_MIN); }
+function serveParams(n){ return { pow: lerp(10.5,20.5,n), upk: lerp(0.44,0.58,n) }; }
+
 function beginServeCharge(){
   if(ball.awaitingServe && ball.serving==='player' && serveHold===0){
     serveHold=0.0001; hud.lastMsg.textContent='Hold Space, release to serve (diagonal)';
@@ -229,83 +204,70 @@ function beginServeCharge(){
 }
 function releaseServe(){
   if(!(ball.awaitingServe && ball.serving==='player' && serveHold>0)){ serveHold=0; return; }
-  const n = normHold(serveHold);
-  const {pow, upk} = serveParams(n);
-  const toLeft=(ball.serveSide==='left');
-  const targetX=(toLeft?1:-1)*1.1;
-  const targetZ=HALF_L - NVZ - (COURT_L/4 - NVZ/2)*0.6;
+  const n=normHold(serveHold), {pow,upk}=serveParams(n), toLeft=(ball.serveSide==='left');
+  const targetX=(toLeft?1:-1)*1.1, targetZ=HALF_L - NVZ - (COURT_L/4 - NVZ/2)*0.6;
+  const dx=targetX-ball.x, dz=targetZ-ball.z, L=Math.max(1e-6,Math.hypot(dx,dz)), nx=dx/L, nz=dz/L;
 
-  const dx=targetX-ball.x, dz=targetZ-ball.z; const L=Math.max(1e-6, Math.hypot(dx,dz));
-  const nx=dx/L, nz=dz/L;
   ball.vx=nx*pow; ball.vz=nz*pow; ball.vy=pow*upk;
   ball.ox=0; ball.oy=(toLeft?-1:1)*18; ball.oz=90;
   ball.awaitingServe=false; ball.inPlay=true; ball.lastHitter='player';
   hud.lastMsg.textContent='';
   serveHold=0;
 }
-function updateServeHold(dt){ if(ball.awaitingServe && ball.serving==='player' && serveHold>0){ serveHold+=dt; if(serveHold>SERVE_MAX) serveHold=SERVE_MAX; } }
+function updateServeHold(dt){
+  if(ball.awaitingServe && ball.serving==='player' && serveHold>0){
+    serveHold=Math.min(SERVE_MAX, serveHold+dt);
+  }
+}
 
-/* =========================================================
-   AI
-========================================================= */
-const aiState={ serveTimer:1.0 };
+/* ============================ AI ============================ */
+let aiServeTimer=1.0;
 function aiUpdate(dt){
-  const targetX=clamp(ball.x,-HALF_W+.4,HALF_W-.4);
-  const baseZ=HALF_L-(ball.z>HALF_L*.5?1.8:2.4);
-  const targetZ=baseZ;
-  const dx=targetX-ai.x, dz=targetZ-ai.z, d=Math.hypot(dx,dz);
-  if(d>1e-3){ const s=ai.speed*dt; const k=Math.min(1,s/d); ai.x+=dx*k; ai.z+=dz*k; }
+  const targetX=clamp(ball.x,-HALF_W+.4,HALF_W-.4), baseZ=HALF_L-(ball.z>HALF_L*.5?1.8:2.4);
+  const dx=targetX-ai.x, dz=baseZ-ai.z, d=Math.hypot(dx,dz);
+  if(d>1e-3){ const k=Math.min(1,(ai.speed*dt)/d); ai.x+=dx*k; ai.z+=dz*k; }
   ai.x=clamp(ai.x,-HALF_W+.35,HALF_W-.35); ai.z=clamp(ai.z,.2,HALF_L-.4);
   ai.cool-=dt;
 
-  const reach=0.95, onAISide=ball.z>0;
-  const inReach=(Math.hypot(ball.x-ai.x, (ball.z-(ai.z-0.25)))<reach && Math.abs(ball.y-0.8)<1.2);
+  // return hit
+  const onAISide=ball.z>0, reach=0.95;
+  const inReach=(Math.hypot(ball.x-ai.x,(ball.z-(ai.z-0.25)))<reach && Math.abs(ball.y-0.8)<1.2);
   if(ball.inPlay && onAISide && ai.cool<=0 && inReach){
     const tgtX=ball.x>0?-1.2:1.2, tgtZ=-HALF_L+1.9;
-    const vx=tgtX-ball.x, vy=.95-ball.y, vz=tgtZ-ball.z; let L=len3(vx,vy,vz); if(L<1e-6) L=1;
-    const spd=clamp(9.2+(ball.y-.5)*4, 7.5, 13.0);
-    ball.vx=(vx/L)*spd; ball.vy=(vy/L)*spd; ball.vz=(vz/L)*spd;
+    const vx=tgtX-ball.x, vy=.95-ball.y, vz=tgtZ-ball.z; let L=Math.hypot(vx,vy,vz); if(L<1e-6) L=1;
+    const spd=clamp(9.2+(ball.y-.5)*4,7.5,13.0);
+    ball.vx=vx/L*spd; ball.vy=vy/L*spd; ball.vz=vz/L*spd;
     ball.ox=0; ball.oy=(tgtX>0?-1:1)*25; ball.oz=58;
     ball.lastHitter='ai'; ai.cool=.20;
   }
 
   // AI serve
   if(ball.awaitingServe && ball.serving==='ai'){
-    aiState.serveTimer-=dt;
-    if(aiState.serveTimer<=0){
-      const n=0.6; const {pow, upk} = serveParams(n);
-      const toLeft=(ball.serveSide==='right');
-      const targetX=(toLeft?-1:1)*1.1;
-      const targetZ=-HALF_L + NVZ + 1.6;
-      const dx=targetX-ball.x, dz=targetZ-ball.z; let L=Math.hypot(dx,dz); if(L<1e-6) L=1;
-      const nx=dx/L, nz=dz/L;
+    aiServeTimer-=dt;
+    if(aiServeTimer<=0){
+      const n=.6, {pow,upk}=serveParams(n), toLeft=(ball.serveSide==='right');
+      const tx=(toLeft?-1:1)*1.1, tz=-HALF_L+NVZ+1.6;
+      const dx=tx-ball.x, dz=tz-ball.z, L=Math.max(1e-6,Math.hypot(dx,dz)), nx=dx/L, nz=dz/L;
       ball.vx=nx*pow; ball.vz=nz*pow; ball.vy=pow*upk;
       ball.ox=0; ball.oy=(toLeft?1:-1)*18; ball.oz=90;
-      ball.awaitingServe=false; ball.inPlay=true; ball.lastHitter='ai';
-      aiState.serveTimer=1.0;
+      ball.awaitingServe=false; ball.inPlay=true; ball.lastHitter='ai'; aiServeTimer=1.0;
     }
   }
 }
 
-/* =========================================================
-   Paddle & hit
-========================================================= */
+/* ============================ Paddle / Hit ============================ */
 function paddleWorld(){
-  const cy=Math.cos(cam.yaw), sy=Math.sin(cam.yaw);
-  const cp=Math.cos(cam.pitch), sp=Math.sin(cam.pitch);
-  const fwd={ x: sy*cp, y: -sp, z: cy*cp*-1 };
-  const right={ x: cy, y:0, z: sy };
-  const up={ x: sy*sp, y: cp, z: -cy*sp };
+  const cy=Math.cos(cam.yaw), sy=Math.sin(cam.yaw), cp=Math.cos(cam.pitch), sp=Math.sin(cam.pitch);
+  const fwd={ x: sy*cp, y: -sp, z: cy*cp*-1 }, right={ x: cy, y:0, z: sy }, up={ x: sy*sp, y: cp, z: -cy*sp };
 
-  const px=cam.x + right.x*0.35 + fwd.x*0.55 + (-up.x)*0.15;
-  const py=cam.y + right.y*0.35 + fwd.y*0.55 + (-up.y)*0.15;
-  const pz=cam.z + right.z*0.35 + fwd.z*0.55 + (-up.z)*0.15;
+  const px=cam.x + right.x*0.35 + fwd.x*0.55 - up.x*0.15;
+  const py=cam.y + right.y*0.35 + fwd.y*0.55 - up.y*0.15;
+  const pz=cam.z + right.z*0.35 + fwd.z*0.55 - up.z*0.15;
 
   const ct=Math.cos(player.tilt), st=Math.sin(player.tilt);
   const upTilt={ x: up.x*ct + fwd.x*st, y: up.y*ct + fwd.y*st, z: up.z*ct + fwd.z*st };
   return { pos:{x:px,y:py,z:pz}, basis:{fwd,right,up:upTilt} };
 }
-
 function tryHit(){
   if(!ball.inPlay) return;
   const pw=paddleWorld();
@@ -318,7 +280,8 @@ function tryHit(){
 
   const f=pw.basis.fwd;
   let dir={ x:f.x, y:f.y + (ball.y<1.0?0.14:0.06), z:f.z };
-  [dir.x,dir.y,dir.z]=norm3(dir.x,dir.y,dir.z);
+  const L=Math.max(1e-6,Math.hypot(dir.x,dir.y,dir.z)); dir.x/=L; dir.y/=L; dir.z/=L;
+
   const base=10.5, heightBonus=clamp((ball.y-.6)*2.3,-0.5,2.3);
   const spd=clamp(base+heightBonus,7.5,13.2);
   ball.vx=dir.x*spd; ball.vy=dir.y*spd; ball.vz=dir.z*spd;
@@ -327,11 +290,25 @@ function tryHit(){
 }
 canvas.addEventListener('mousedown', e=>{ if(e.button===0) tryHit(); });
 
-/* =========================================================
-   Physics & rules (with safety clamps)
-========================================================= */
+/* ============================ Physics & Rules ============================ */
+function isInReceiverServiceBox(receiver,x,z){
+  const onFar=(receiver==='ai'); if(onFar && z<0) return false; if(!onFar && z>0) return false;
+  const inDepth=Math.abs(z)>=NVZ-0.02 && Math.abs(z)<=HALF_L+0.05;
+  let mustLeft; if(ball.serving==='player'){ mustLeft=(ball.serveSide==='right'); } else { mustLeft=(ball.serveSide!=='right'); }
+  const inHalf=mustLeft?(x<0):(x>0);
+  return inDepth && inHalf && (Math.abs(x)<=HALF_W+0.03);
+}
+function fault(reason, pointTo){
+  hud.fault.textContent='FAULT — '+reason; hud.fault.style.display='block'; setTimeout(()=>hud.fault.style.display='none',900);
+  if(ball.serving===pointTo){ score[pointTo]++; } else { ball.serving=pointTo; }
+  updateHUD();
+  if((score.player>=11||score.ai>=11) && Math.abs(score.player-score.ai)>=2){
+    hud.lastMsg.textContent=(score.player>score.ai?'You win!':'AI wins!')+' Refresh to play again.';
+    ball.inPlay=false; ball.awaitingServe=false; return;
+  }
+  resetForServe(ball.serving);
+}
 function physicsStep(dt){
-  // serve idles
   if(ball.awaitingServe){
     if(ball.serving==='player'){
       ball.x=lerp(ball.x, player.x+(ball.serveSide==='right'?1.0:-1.0), .1);
@@ -342,9 +319,9 @@ function physicsStep(dt){
   }
   if(!ball.inPlay) return;
 
-  // limit crazy velocities (safety)
+  // clamp crazy velocities
   let vlen=len3(ball.vx,ball.vy,ball.vz);
-  if(!isFinite(vlen)) { showErr('Velocity became NaN — resetting ball.'); hardReset(); return; }
+  if(!isFinite(vlen)){ resetForServe('player'); return; }
   if(vlen>MAX_SPEED){ const k=MAX_SPEED/vlen; ball.vx*=k; ball.vy*=k; ball.vz*=k; vlen=MAX_SPEED; }
 
   const drag=DRAG_K*vlen;
@@ -364,63 +341,44 @@ function physicsStep(dt){
     if(ball.bouncesSinceServe===1 && ball.lastHitter==='ai' && !isInReceiverServiceBox('player',ball.x,ball.z)){ fault('AI Bad Serve','player'); return; }
   }
 
-  // net crossing
+  // crossing the net plane
   if((ball.lastZ<0 && ball.z>=0) || (ball.lastZ>0 && ball.z<=0)){
     const h=netHeightAtX(ball.x)+NET_CLEAR_BONUS;
     if(ball.y<=h){ fault(ball.lastHitter==='player'?'Net (You)':'Net (AI)', ball.lastHitter==='player'?'ai':'player'); return; }
-    else{ ball.groundBouncesSinceSide=0; ball.sideNow=(ball.z>=0)?'ai':'player'; }
+    ball.groundBouncesSinceSide=0; ball.sideNow=(ball.z>=0)?'ai':'player';
   }
   ball.lastZ=ball.z;
 
-  // out when grounded off court
+  // out after a bounce
   if(ball.y<=BALL_R+.001){
     const outX=(Math.abs(ball.x)>HALF_W+.01), outZ=(Math.abs(ball.z)>HALF_L+.01);
     if(outX||outZ){ const winner=ball.lastHitter==='player'?'ai':'player'; fault(outX?'OUT (sideline)':'OUT (baseline)',winner); return; }
   }
 }
-function isInReceiverServiceBox(receiver,x,z){
-  const onFar=(receiver==='ai'); if(onFar && z<0) return false; if(!onFar && z>0) return false;
-  const inDepth=Math.abs(z)>=NVZ-0.02 && Math.abs(z)<=HALF_L+0.05;
-  let mustLeft; if(ball.serving==='player'){ mustLeft=(ball.serveSide==='right'); } else { mustLeft=(ball.serveSide!=='right'); }
-  const inHalf=mustLeft?(x<0):(x>0);
-  return inDepth && inHalf && (Math.abs(x)<=HALF_W+0.03);
-}
-function fault(reason, pointTo){
-  hud.fault.textContent='FAULT — '+reason; hud.fault.style.display='block'; setTimeout(()=>hud.fault.style.display='none',900);
-  if(ball.serving===pointTo){ score[pointTo]++; } else { ball.serving=pointTo; }
-  updateHUD();
-  if((score.player>=11||score.ai>=11) && Math.abs(score.player-score.ai)>=2){
-    hud.lastMsg.textContent=(score.player>score.ai?'You win!':'AI wins!')+' Refresh to play again.'; ball.inPlay=false; ball.awaitingServe=false; return;
-  }
-  resetForServe(ball.serving);
-}
 
-/* =========================================================
-   Aim-assist
-========================================================= */
+/* ============================ Aim-assist & NVZ hint ============================ */
 const dots=new Array(7).fill(null).map(()=>({x:0,y:0,z:0,show:false,a:1}));
 function updateDots(){
   dots.forEach(d=>d.show=false);
-  const pw=paddleWorld(); const reach=0.95;
+  const pw=paddleWorld(), reach=0.95;
   const inReach=Math.hypot(ball.x-pw.pos.x,ball.y-pw.pos.y,ball.z-pw.pos.z)<reach && ball.z<0;
   const show=(ball.inPlay && inReach) || (ball.awaitingServe && ball.serving==='player');
   if(!show) return;
 
   let vx,vy,vz;
   if(ball.awaitingServe){
-    const n = normHold(serveHold>0?serveHold:SERVE_MIN);
-    const {pow, upk} = serveParams(n);
+    const n = normHold(serveHold>0?serveHold:SERVE_MIN), {pow,upk} = serveParams(n);
     const toLeft=(ball.serveSide==='left'); const tx=(toLeft?1:-1)*1.1, tz=HALF_L - NVZ - (COURT_L/4 - NVZ/2)*0.6;
-    const dx=tx-ball.x, dz=tz-ball.z; let L=Math.hypot(dx,dz); if(L<1e-6) L=1;
-    vx=(dx/L)*pow; vz=(dz/L)*pow; vy=pow*upk;
+    const dx=tx-ball.x, dz=tz-ball.z, L=Math.max(1e-6,Math.hypot(dx,dz));
+    vx=dx/L*pow; vz=dz/L*pow; vy=pow*upk;
   }else{
-    const f=pw.basis.fwd; let dir={ x:f.x, y:f.y + (ball.y<1.0?0.12:0.06), z:f.z }; [dir.x,dir.y,dir.z]=norm3(dir.x,dir.y,dir.z);
-    const spd=10.5; vx=dir.x*spd; vy=dir.y*spd; vz=dir.z*spd;
+    const f=pw.basis.fwd; const L=Math.max(1e-6,Math.hypot(f.x,f.y+.12,f.z));
+    vx=f.x/L*10.5; vy=(f.y+.12)/L*10.5; vz=f.z/L*10.5;
   }
   let px=ball.x, py=ball.y, pz=ball.z, vvx=vx, vvy=vy, vvz=vz;
   for(let i=0;i<dots.length;i++){
     for(let s=0;s<3;s++){
-      const vlen=len3(vvx,vvy,vvz), drag=DRAG_K*vlen;
+      const v=Math.hypot(vvx,vvy,vvz), drag=DRAG_K*v;
       const ax=-drag*vvx + MAGNUS_K*(ball.oy*vvz - ball.oz*vvy);
       const ay=GRAV - drag*vvy + MAGNUS_K*(ball.oz*vvx - ball.ox*vvz);
       const az=-drag*vvz + MAGNUS_K*(ball.ox*vvy - ball.oy*vvx);
@@ -431,161 +389,96 @@ function updateDots(){
     dots[i].x=px; dots[i].y=py; dots[i].z=pz; dots[i].show=true; dots[i].a=0.9 - i*0.12;
   }
 }
-
-/* =========================================================
-   NVZ hint
-========================================================= */
 function updateNVZHint(){
   if(!ball.inPlay){ hud.nvz.style.display='none'; return; }
   const inNVZ=(player.z>-NVZ && player.z<0);
-  const onPlayerSide=ball.z<0;
-  const wasVolley=ball.groundBouncesSinceSide===0 && onPlayerSide;
+  const wasVolley=ball.groundBouncesSinceSide===0 && ball.z<0;
   const close=Math.hypot(player.x-ball.x, player.z-ball.z)<1.2;
   hud.nvz.style.display=(inNVZ && wasVolley && close)?'block':'none';
 }
 
-/* =========================================================
-   Rendering
-========================================================= */
-function drawSky(){ ctx.save(); ctx.globalAlpha=0.06; ctx.fillStyle='#ffffff'; ctx.beginPath(); ctx.arc(W*0.15, H*0.18, 140, 0, Math.PI*2); ctx.fill(); ctx.restore(); }
-function quad(p0,p1,p2,p3, fill){
-  const a=project(...p0), b=project(...p1), c=project(...p2), d=project(...p3);
-  if(!a||!b||!c||!d) return;
-  ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); ctx.lineTo(c.x,c.y); ctx.lineTo(d.x,d.y); ctx.closePath();
-  ctx.fillStyle=fill; ctx.fill();
+/* ============================ Rendering ============================ */
+function drawSky(){
+  ctx.save(); ctx.globalAlpha=0.06; ctx.fillStyle='#ffffff';
+  ctx.beginPath(); ctx.arc(W*0.15, H*0.18, 140, 0, Math.PI*2); ctx.fill(); ctx.restore();
 }
 function drawCourt(){
-  quad([-HALF_W,0,-HALF_L],[HALF_W,0,-HALF_L],[HALF_W,0,HALF_L],[-HALF_W,0,HALF_L],'#1d7fb5');
-  const lw=0.05;
-  quad([-HALF_W,0,-HALF_L],[-HALF_W+lw,0,-HALF_L],[-HALF_W+lw,0,HALF_L],[-HALF_W,0,HALF_L],'#ffffff');
-  quad([HALF_W-lw,0,-HALF_L],[HALF_W,0,-HALF_L],[HALF_W,0,HALF_L],[HALF_W-lw,0,HALF_L],'#ffffff');
-  quad([-HALF_W,0,-HALF_L], [HALF_W,0,-HALF_L], [HALF_W,0,-HALF_L+lw], [-HALF_W,0,-HALF_L+lw], '#ffffff');
-  quad([-HALF_W,0, HALF_L-lw], [HALF_W,0, HALF_L-lw], [HALF_W,0, HALF_L], [-HALF_W,0, HALF_L], '#ffffff');
-  const clw=0.04;
-  quad([-clw/2,0,-HALF_L], [clw/2,0,-HALF_L], [clw/2,0,-NVZ], [-clw/2,0,-NVZ], '#ffffff');
-  quad([-clw/2,0, NVZ], [clw/2,0, NVZ], [clw/2,0, HALF_L], [-clw/2,0, HALF_L], '#ffffff');
-  quad([-HALF_W,0,-NVZ-lw/2], [HALF_W,0,-NVZ-lw/2], [HALF_W,0,-NVZ+lw/2], [-HALF_W,0,-NVZ+lw/2], '#ffffff');
-  quad([-HALF_W,0, NVZ-lw/2], [HALF_W,0, NVZ-lw/2], [HALF_W,0, NVZ+lw/2], [-HALF_W,0, NVZ+lw/2], '#ffffff');
-
-  ctx.save(); ctx.strokeStyle='rgba(111,160,200,.35)'; ctx.lineWidth=1;
-  for(let i=-3;i<=3;i++){
-    const z=i*4.5;
-    const a=project(-HALF_W-2,1.2,z), b=project(HALF_W+2,1.2,z);
-    if(a&&b){ ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); ctx.stroke(); }
-  }
-  ctx.restore();
+  // floor
+  fillWorldQuad([-HALF_W,0,-HALF_L],[HALF_W,0,-HALF_L],[HALF_W,0,HALF_L],[-HALF_W,0,HALF_L],'#1d7fb5');
+  // lines
+  const lw=0.05, clw=0.04;
+  fillWorldQuad([-HALF_W,0,-HALF_L],[-HALF_W+lw,0,-HALF_L],[-HALF_W+lw,0,HALF_L],[-HALF_W,0,HALF_L],'#ffffff');
+  fillWorldQuad([HALF_W-lw,0,-HALF_L],[HALF_W,0,-HALF_L],[HALF_W,0,HALF_L],[HALF_W-lw,0,HALF_L],'#ffffff');
+  fillWorldQuad([-HALF_W,0,-HALF_L],[HALF_W,0,-HALF_L],[HALF_W,0,-HALF_L+lw],[-HALF_W,0,-HALF_L+lw],'#ffffff');
+  fillWorldQuad([-HALF_W,0, HALF_L-lw],[HALF_W,0, HALF_L-lw],[HALF_W,0, HALF_L],[-HALF_W,0, HALF_L],'#ffffff');
+  fillWorldQuad([-clw/2,0,-HALF_L],[clw/2,0,-HALF_L],[clw/2,0,-NVZ],[-clw/2,0,-NVZ],'#ffffff');
+  fillWorldQuad([-clw/2,0, NVZ],[clw/2,0, NVZ],[clw/2,0, HALF_L],[-clw/2,0, HALF_L],'#ffffff');
+  fillWorldQuad([-HALF_W,0,-NVZ-lw/2],[HALF_W,0,-NVZ-lw/2],[HALF_W,0,-NVZ+lw/2],[-HALF_W,0,-NVZ+lw/2],'#ffffff');
+  fillWorldQuad([-HALF_W,0, NVZ-lw/2],[HALF_W,0, NVZ-lw/2],[HALF_W,0, NVZ+lw/2],[-HALF_W,0, NVZ+lw/2],'#ffffff');
 }
 function drawNet(){
   const bands=14, alpha=0.5;
   for(let i=0;i<bands;i++){
     const t0=i/bands, t1=(i+1)/bands;
     const x0=lerp(-HALF_W,HALF_W,t0), x1=lerp(-HALF_W,HALF_W,t1);
-    const h0=netHeightAtX(x0), h1=netHeightAtX(x1);
-    const a0=project(x0,0,0), a1=project(x1,0,0), b0=project(x0,h0*0.95,0), b1=project(x1,h1*0.95,0);
-    if(a0&&a1&&b0&&b1){
-      ctx.beginPath(); ctx.moveTo(a0.x,a0.y); ctx.lineTo(a1.x,a1.y); ctx.lineTo(b1.x,b1.y); ctx.lineTo(b0.x,b0.y); ctx.closePath();
-      ctx.fillStyle=`rgba(42,47,54,${alpha})`; ctx.fill();
-    }
+    const h0=netHeightAtX(x0)*0.95, h1=netHeightAtX(x1)*0.95;
+    fillWorldQuad([x0,0,0],[x1,0,0],[x1,h1,0],[x0,h0,0], `rgba(42,47,54,${alpha})`);
   }
 }
 function drawOpponent(){
   const w=0.5,h=1.7;
-  const p0=project(ai.x-w/2,0,ai.z), p1=project(ai.x+w/2,0,ai.z), p2=project(ai.x+w/2,h,ai.z), p3=project(ai.x-w/2,h,ai.z);
-  if(p0&&p1&&p2&&p3){
-    ctx.beginPath(); ctx.moveTo(p0.x,p0.y); ctx.lineTo(p1.x,p1.y); ctx.lineTo(p2.x,p2.y); ctx.lineTo(p3.x,p3.y); ctx.closePath();
-    ctx.fillStyle='#ff8b59'; ctx.fill();
-  }
+  fillWorldQuad([ai.x-w/2,0,ai.z],[ai.x+w/2,0,ai.z],[ai.x+w/2,h,ai.z],[ai.x-w/2,h,ai.z],'#ff8b59');
 }
 function drawBall(){
   const p=project(ball.x,ball.y,ball.z); if(!p) return;
   const r=clamp(BALL_R/p.z * focal()*2.2, 2, 22);
   const sg=project(ball.x,0,ball.z);
   if(sg){ ctx.fillStyle='rgba(0,0,0,.25)'; ctx.beginPath(); ctx.ellipse(sg.x,sg.y, r*1.4, r*0.7, 0, 0, Math.PI*2); ctx.fill(); }
-  ctx.fillStyle='#ffef88'; ctx.strokeStyle='rgba(0,0,0,.25)'; ctx.lineWidth=1;
-  ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI*2); ctx.fill(); ctx.stroke();
+  ctx.fillStyle='#ffef88'; ctx.strokeStyle='rgba(0,0,0,.25)'; ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI*2); ctx.fill(); ctx.stroke();
 }
 function drawPaddle(){
   const pw=paddleWorld();
   const hw=0.11, hh=0.16;
   const r=pw.basis.right, u=pw.basis.up, c=pw.pos;
-  const verts=[
-    [c.x - hw*r.x - hh*u.x, c.y - hw*r.y - hh*u.y, c.z - hw*r.z - hh*u.z],
-    [c.x + hw*r.x - hh*u.x, c.y + hw*r.y - hh*u.y, c.z + hw*r.z - hh*u.z],
-    [c.x + hw*r.x + hh*u.x, c.y + hw*r.y + hh*u.y, c.z + hw*r.z + hh*u.z],
-    [c.x - hw*r.x + hh*u.x, c.y - hw*r.y + hh*u.y, c.z - hw*r.z + hh*u.z],
-  ];
-  const p=verts.map(v=>project(v[0],v[1],v[2]));
-  if(p.every(Boolean)){
-    ctx.beginPath(); ctx.moveTo(p[0].x,p[0].y); for(let i=1;i<4;i++) ctx.lineTo(p[i].x,p[i].y); ctx.closePath();
-    ctx.fillStyle='#2b5fff'; ctx.strokeStyle='rgba(0,0,0,.25)'; ctx.lineWidth=1.5; ctx.fill(); ctx.stroke();
-  }
+  const v0=[c.x - hw*r.x - hh*u.x, c.y - hw*r.y - hh*u.y, c.z - hw*r.z - hh*u.z];
+  const v1=[c.x + hw*r.x - hh*u.x, c.y + hw*r.y - hh*u.y, c.z + hw*r.z - hh*u.z];
+  const v2=[c.x + hw*r.x + hh*u.x, c.y + hw*r.y + hh*u.y, c.z + hw*r.z + hh*u.z];
+  const v3=[c.x - hw*r.x + hh*u.x, c.y - hw*r.y + hh*u.y, c.z - hw*r.z + hh*u.z];
+  fillWorldQuad(v0,v1,v2,v3,'#2b5fff');
+  // outline (optional)
+  const p=[v0,v1,v2,v3].map(q=>project(q[0],q[1],q[2])); if(p.every(Boolean)){ ctx.beginPath(); ctx.moveTo(p[0].x,p[0].y); for(let i=1;i<4;i++) ctx.lineTo(p[i].x,p[i].y); ctx.closePath(); ctx.lineWidth=1.5; ctx.strokeStyle='rgba(0,0,0,.25)'; ctx.stroke(); }
 }
 function drawDots(){
   for(const d of dots){
     if(!d.show) continue;
     const p=project(d.x,d.y,d.z); if(!p) continue;
     const r=clamp(5/p.z * focal()*0.03, 2, 6);
-    ctx.fillStyle=`rgba(255,255,255,${d.a})`;
-    ctx.beginPath(); ctx.arc(p.x,p.y,r,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle=`rgba(255,255,255,${d.a})`; ctx.beginPath(); ctx.arc(p.x,p.y,r,0,Math.PI*2); ctx.fill();
   }
 }
 
-/* =========================================================
-   Main loop (guarded)
-========================================================= */
+/* ============================ Main Loop ============================ */
 let acc=0, last=performance.now();
 function loop(now){
-  try{
-    const dt=Math.min(.05,(now-last)/1000); last=now; acc+=dt;
+  const dt=Math.min(.05,(now-last)/1000); last=now; acc+=dt;
 
-    updatePlayer(dt);
-    aiUpdate(dt);
-    updateServeHold(dt);
-    updateDots();
-    updateNVZHint();
+  updatePlayer(dt);
+  aiUpdate(dt);
+  updateServeHold(dt);
+  updateDots();
+  updateNVZHint();
 
-    while(acc>=DT_FIXED){ physicsStep(DT_FIXED); acc-=DT_FIXED; }
+  while(acc>=DT_FIXED){ physicsStep(DT_FIXED); acc-=DT_FIXED; }
 
-    ctx.clearRect(0,0,W,H);
-    drawSky();
-    drawCourt();
-    drawNet();
-    drawOpponent();
-    drawDots();
-    drawBall();
-    drawPaddle();
+  ctx.clearRect(0,0,W,H);
+  drawSky(); drawCourt(); drawNet(); drawOpponent(); drawDots(); drawBall(); drawPaddle();
 
-    if(!ball.awaitingServe || (ball.awaitingServe && ball.serving==='player' && serveHold>0)) centerMsg.style.display='none';
-  }catch(e){
-    showErr('Unhandled error: '+e.message);
-  }
+  if(!ball.awaitingServe || (ball.awaitingServe && ball.serving==='player' && serveHold>0)) centerMsg.style.display='none';
   requestAnimationFrame(loop);
 }
 requestAnimationFrame(loop);
 
-/* =========================================================
-   Win/serve helpers
-========================================================= */
-function isInReceiverServiceBox(receiver,x,z){
-  const onFar=(receiver==='ai'); if(onFar && z<0) return false; if(!onFar && z>0) return false;
-  const inDepth=Math.abs(z)>=NVZ-0.02 && Math.abs(z)<=HALF_L+0.05;
-  let mustLeft; if(ball.serving==='player'){ mustLeft=(ball.serveSide==='right'); } else { mustLeft=(ball.serveSide!=='right'); }
-  const inHalf=mustLeft?(x<0):(x>0);
-  return inDepth && inHalf && (Math.abs(x)<=HALF_W+0.03);
-}
-function fault(reason, pointTo){
-  hud.fault.textContent='FAULT — '+reason; hud.fault.style.display='block'; setTimeout(()=>hud.fault.style.display='none',900);
-  if(ball.serving===pointTo){ score[pointTo]++; } else { ball.serving=pointTo; }
-  updateHUD();
-  if((score.player>=11||score.ai>=11) && Math.abs(score.player-score.ai)>=2){
-    hud.lastMsg.textContent=(score.player>score.ai?'You win!':'AI wins!')+' Refresh to play again.'; ball.inPlay=false; ball.awaitingServe=false; return;
-  }
-  resetForServe(ball.serving);
-}
-
-/* =========================================================
-   Init HUD
-========================================================= */
+/* ============================ Init ============================ */
 updateHUD();
 </script>
 </body>
