@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"/>
-<title>PicklePop — First-Person (Canvas 2D) v0.1.5</title>
+<title>PicklePop — First-Person (Canvas 2D) v0.1.6</title>
 <style>
   html,body{margin:0;height:100%;background:#0a0f17;overscroll-behavior:none}
   canvas{display:block;width:100vw;height:100vh;background:linear-gradient(#20324f,#132237)}
@@ -66,39 +66,39 @@
 
 <script>
 /* -------------------------
-   Core constants / helpers
+   Tuned physics (longer carry)
 ------------------------- */
 const COURT_W=6.10, COURT_L=13.41, HALF_W=COURT_W/2, HALF_L=COURT_L/2;
 const NVZ=2.13, NET_H_CENTER=0.86, NET_H_SIDE=0.914;
-const BALL_R=0.037, GRAV=-9.81, DRAG_K=0.9, MAGNUS_K=0.0006;
+const BALL_R=0.037;
+const GRAV=-8.5;          // softer gravity so arcs carry a bit more (arcade feel)
+const DRAG_K=0.04;        // MUCH lower air drag so balls don't die early
+const MAGNUS_K=0.0010;    // a tad more Magnus so top/underspin matters
 const DT_FIXED=1/120, SERVE_MIN=0.4, SERVE_MAX=1.0;
-const NET_CLEAR_BONUS = BALL_R*0.25;   // was 0.75 — slightly relaxed so clean serves clear as expected
+const NET_CLEAR_BONUS = BALL_R*0.25;
 
 const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
 const lerp=(a,b,t)=>a+(b-a)*t;
 function netHeightAtX(x){ const t=clamp(Math.abs(x)/HALF_W,0,1); const s=t*t*(3-2*t); return lerp(NET_H_CENTER,NET_H_SIDE,s); }
 function normHold(t){ return (clamp(t,SERVE_MIN,SERVE_MAX)-SERVE_MIN)/(SERVE_MAX-SERVE_MIN); }
-/* Serve model: more charge = more speed AND more upward bias */
+/* Stronger serve power & lift */
 function serveParams(tHoldNorm){
   return {
-    pow: lerp(8.5, 18.0, tHoldNorm),       // overall speed
-    upk: lerp(0.40, 0.52, tHoldNorm)       // upward factor (multiplies pow → vy)
+    pow: lerp(10.5, 20.0, tHoldNorm),   // speed
+    upk: lerp(0.44, 0.56, tHoldNorm)    // vertical fraction of pow
   };
 }
 
 /* -------------------------
-   Canvas setup
+   Canvas & camera
 ------------------------- */
 const canvas=document.getElementById('game'), ctx=canvas.getContext('2d');
 let W=innerWidth, H=innerHeight;
 function resize(){ W=canvas.width=innerWidth; H=canvas.height=innerHeight; }
 addEventListener('resize', resize); resize();
 
-/* -------------------------
-   Camera (first-person)
-------------------------- */
 const cam={ x:0,y:1.7,z:-HALF_L+0.8, yaw:0, pitch:0, near:0.05, fov:75 };
-function focal(){ return 0.5*H/Math.tan((cam.fov*Math.PI/180)/2); } // px focal length
+function focal(){ return 0.5*H/Math.tan((cam.fov*Math.PI/180)/2); }
 function toCamSpace(x,y,z){
   let dx=x-cam.x, dy=y-cam.y, dz=z-cam.z;
   const cy=Math.cos(-cam.yaw), sy=Math.sin(-cam.yaw);
@@ -108,14 +108,12 @@ function toCamSpace(x,y,z){
   return {x:x1,y:y2,z:z2};
 }
 function project(x,y,z){
-  const p=toCamSpace(x,y,z);
-  if(p.z<=cam.near) return null;
-  const f=focal();
-  return { x:W/2 + (p.x/p.z)*f, y:H*0.58 - (p.y/p.z)*f, z:p.z };
+  const p=toCamSpace(x,y,z); if(p.z<=cam.near) return null;
+  const f=focal(); return { x:W/2 + (p.x/p.z)*f, y:H*0.58 - (p.y/p.z)*f, z:p.z };
 }
 
 /* -------------------------
-   Input + pointer lock
+   Input & lock
 ------------------------- */
 let pointerLocked=false;
 const lockUI=document.getElementById('lock'), playBtn=document.getElementById('playBtn'), centerMsg=document.getElementById('centerMsg');
@@ -144,18 +142,18 @@ const hud={ pScore:document.getElementById('pScore'), aiScore:document.getElemen
    Entities
 ------------------------- */
 const player={ x:0,z:-HALF_L+0.8, speed:5.5, sprint:8.0, crouch:0, tilt:0 };
-const ai={ x:0,z:HALF_L-1.6, speed:5.0, cool:0 };
+const ai={ x:0,z:HALF_L-1.6, speed:5.2, cool:0 }; // +slightly faster so rallies flow
 
 const ball={ x:0,y:1.0,z:-HALF_L+0.5, vx:0,vy:0,vz:0, ox:0,oy:0,oz:0,
   lastZ:-HALF_L+0.5, bouncesSinceServe:0, lastHitter:'none', inPlay:false, serving:'player',
   serveSide:'right', awaitingServe:true, sideNow:'player', groundBouncesSinceSide:0 };
 
 let serveHold=0;
+const score={ player:0, ai:0 };
 
 /* -------------------------
-   Scoring / serve state
+   Scoring / serve
 ------------------------- */
-const score={ player:0, ai:0 };
 function updateHUD(){ hud.pScore.textContent=score.player; hud.aiScore.textContent=score.ai;
   hud.serverPill.textContent=`Serve: ${ball.serving==='player'?'You':'AI'}`;
   hud.sidePill.textContent=ball.serveSide==='right'?'Right':'Left'; }
@@ -180,7 +178,7 @@ function resetForServe(serving){
 resetForServe('player');
 
 /* -------------------------
-   Controls: move / tilt
+   Player movement / tilt
 ------------------------- */
 function updatePlayer(dt){
   const targetC=keys.has('ControlLeft')?1:0; player.crouch+=(targetC-player.crouch)*Math.min(1,dt*12);
@@ -207,7 +205,7 @@ function updatePlayer(dt){
 }
 
 /* -------------------------
-   Serve handling (FIXED)
+   Serve (more lift & power)
 ------------------------- */
 function beginServeCharge(){
   if(ball.awaitingServe && ball.serving==='player' && serveHold===0){
@@ -224,11 +222,8 @@ function releaseServe(){
 
   const dx=targetX-ball.x, dz=targetZ-ball.z; const L=Math.hypot(dx,dz)||1;
   const nx=dx/L, nz=dz/L;
-
-  ball.vx=nx*pow;
-  ball.vz=nz*pow;
-  ball.vy=pow*upk;               // ↑ bigger upward push so serves clear the net
-  ball.ox=0; ball.oy=(toLeft?-1:1)*18; ball.oz=90;  // a bit more topspin = drops after clearing
+  ball.vx=nx*pow; ball.vz=nz*pow; ball.vy=pow*upk;
+  ball.ox=0; ball.oy=(toLeft?-1:1)*18; ball.oz=90;
   ball.awaitingServe=false; ball.inPlay=true; ball.lastHitter='player';
   hud.lastMsg.textContent='';
   serveHold=0;
@@ -250,17 +245,17 @@ function aiUpdate(dt){
   const reach=0.95, onAISide=ball.z>0;
   const inReach=(Math.hypot(ball.x-ai.x, (ball.z-(ai.z-0.25)))<reach && Math.abs(ball.y-0.8)<1.2);
   if(ball.inPlay && onAISide && ai.cool<=0 && inReach){
-    const tgtX=ball.x>0?-1.2:1.2, tgtZ=-HALF_L+1.8;
-    const vx=tgtX-ball.x, vy=.9-ball.y, vz=tgtZ-ball.z; const L=Math.hypot(vx,vy,vz)||1;
-    const spd=clamp(8+(ball.y-.5)*4,6,11);
+    const tgtX=ball.x>0?-1.2:1.2, tgtZ=-HALF_L+1.9; // a tad deeper return
+    const vx=tgtX-ball.x, vy=.95-ball.y, vz=tgtZ-ball.z; const L=Math.hypot(vx,vy,vz)||1;
+    const spd=clamp(9.0+(ball.y-.5)*4, 7.5, 12.0); // slightly quicker
     ball.vx=(vx/L)*spd; ball.vy=(vy/L)*spd; ball.vz=(vz/L)*spd;
-    ball.ox=0; ball.oy=(tgtX>0?-1:1)*25; ball.oz=55;
-    ball.lastHitter='ai'; ai.cool=.22;
+    ball.ox=0; ball.oy=(tgtX>0?-1:1)*25; ball.oz=58;
+    ball.lastHitter='ai'; ai.cool=.20;
   }
 }
 
 /* -------------------------
-   Hit detection (first-person)
+   Paddle & hit
 ------------------------- */
 function paddleWorld(){
   const cy=Math.cos(cam.yaw), sy=Math.sin(cam.yaw);
@@ -289,12 +284,12 @@ function tryHit(){
   if(isVolley && inNVZ){ fault('NVZ Volley Fault (You)','ai'); return; }
 
   const f=pw.basis.fwd;
-  let dir={ x:f.x, y:f.y + (ball.y<1.0?0.14:0.04), z:f.z };
+  let dir={ x:f.x, y:f.y + (ball.y<1.0?0.14:0.06), z:f.z };
   const L=Math.hypot(dir.x,dir.y,dir.z)||1; dir.x/=L; dir.y/=L; dir.z/=L;
-  const base=9.5, heightBonus=clamp((ball.y-.6)*2.5,-1,2.5);
-  const spd=clamp(base+heightBonus,6.5,12.5);
+  const base=10.5, heightBonus=clamp((ball.y-.6)*2.3,-0.5, 2.3);
+  const spd=clamp(base+heightBonus,7.5,13.0);  // a touch faster
   ball.vx=dir.x*spd; ball.vy=dir.y*spd; ball.vz=dir.z*spd;
-  ball.ox=0; ball.oy=-player.tilt*120; ball.oz=65;
+  ball.ox=0; ball.oy=-player.tilt*120; ball.oz=66;
   ball.lastHitter='player';
 }
 canvas.addEventListener('mousedown', e=>{ if(e.button===0) tryHit(); });
@@ -324,8 +319,8 @@ function physicsStep(dt){
   ball.x+=ball.vx*dt; ball.y+=ball.vy*dt; ball.z+=ball.vz*dt;
 
   if(ball.y<BALL_R && ball.vy<0){
-    ball.y=BALL_R; ball.vy=-ball.vy*.45; ball.vx*=.85; ball.vz*=.85;
-    ball.ox*=.90; ball.oy*=.90; ball.oz*=.90; ball.bouncesSinceServe++;
+    ball.y=BALL_R; ball.vy=-ball.vy*.45; ball.vx*=.88; ball.vz*=.88; // keep a bit more carry after bounce
+    ball.ox*=.92; ball.oy*=.92; ball.oz*=.92; ball.bouncesSinceServe++;
     if(ball.z<0){ ball.groundBouncesSinceSide=(ball.sideNow==='player')?(ball.groundBouncesSinceSide+1):1; ball.sideNow='player'; }
     else{ ball.groundBouncesSinceSide=(ball.sideNow==='ai')?(ball.groundBouncesSinceSide+1):1; ball.sideNow='ai'; }
     if(ball.bouncesSinceServe===1 && ball.lastHitter==='player'){ if(!isInReceiverServiceBox('ai',ball.x,ball.z)){ fault('Bad Serve (Service box)','ai'); return; } }
@@ -361,24 +356,23 @@ function fault(reason, pointTo){
   resetForServe(ball.serving);
 }
 
-/* AI serve (FIXED: higher up-bias) */
-let aiServeTimer=1.2;
+/* AI serve (uses same stronger serve model) */
+let aiServeTimer=1.0;
 function aiDoServe(){
   if(!(ball.awaitingServe && ball.serving==='ai')) return;
-  const n=0.6; // pretend ~60% charge
-  const {pow, upk} = serveParams(n);
+  const n=0.6; const {pow, upk} = serveParams(n);
   const toLeft=(ball.serveSide==='right');
   const targetX=(toLeft?-1:1)*1.1;
   const targetZ=-HALF_L + NVZ + 1.6;
   const dx=targetX-ball.x, dz=targetZ-ball.z, L=Math.hypot(dx,dz)||1;
   const nx=dx/L, nz=dz/L;
-  ball.vx=nx*pow; ball.vz=nz*pow; ball.vy=pow*upk; // ↑ more lift
+  ball.vx=nx*pow; ball.vz=nz*pow; ball.vy=pow*upk;
   ball.ox=0; ball.oy=(toLeft?1:-1)*18; ball.oz=90;
-  ball.awaitingServe=false; ball.inPlay=true; ball.lastHitter='ai'; aiServeTimer=1.2;
+  ball.awaitingServe=false; ball.inPlay=true; ball.lastHitter='ai'; aiServeTimer=1.0;
 }
 
 /* -------------------------
-   Aim-assist (matches serve model)
+   Aim-assist (updated)
 ------------------------- */
 const dots=new Array(7).fill(null).map(()=>({x:0,y:0,z:0,show:false,a:1}));
 function updateDots(){
@@ -396,19 +390,20 @@ function updateDots(){
     const dx=tx-ball.x, dz=tz-ball.z, L=Math.hypot(dx,dz)||1;
     vx=(dx/L)*pow; vz=(dz/L)*pow; vy=pow*upk;
   }else{
-    const f=pw.basis.fwd; const dir={ x:f.x, y:f.y + (ball.y<1.0?0.12:0.02), z:f.z };
-    const L=Math.hypot(dir.x,dir.y,dir.z)||1; vx=dir.x/L*9.5; vy=dir.y/L*9.5; vz=dir.z/L*9.5;
+    const f=pw.basis.fwd; const dir={ x:f.x, y:f.y + (ball.y<1.0?0.12:0.06), z:f.z };
+    const L=Math.hypot(dir.x,dir.y,dir.z)||1; const spd=10.5;
+    vx=dir.x/L*spd; vy=dir.y/L*spd; vz=dir.z/L*spd;
   }
   let px=ball.x, py=ball.y, pz=ball.z, vvx=vx, vvy=vy, vvz=vz;
   for(let i=0;i<dots.length;i++){
     for(let s=0;s<3;s++){
-      const vlen=Math.hypot(vvx,vvy,vvz), drag=DRAG_K*vlen*0.04;
+      const vlen=Math.hypot(vvx,vvy,vvz), drag=DRAG_K*vlen;  // use real drag so preview matches flight
       const ax=-drag*vvx + MAGNUS_K*(ball.oy*vvz - ball.oz*vvy);
       const ay=GRAV - drag*vvy + MAGNUS_K*(ball.oz*vvx - ball.ox*vvz);
       const az=-drag*vvz + MAGNUS_K*(ball.ox*vvy - ball.oy*vvx);
       vvx+=ax*(0.1/3); vvy+=ay*(0.1/3); vvz+=az*(0.1/3);
       px+=vvx*(0.1/3); py+=vvy*(0.1/3); pz+=vvz*(0.1/3);
-      if(py<BALL_R){ vvy=Math.abs(vvy)*.45; px+=0; py=BALL_R; vvz*=.87; vvx*=.87; }
+      if(py<BALL_R){ vvy=Math.abs(vvy)*.45; px+=0; py=BALL_R; vvz*=.9; vvx*=.9; }
     }
     dots[i].x=px; dots[i].y=py; dots[i].z=pz; dots[i].show=true; dots[i].a=0.9 - i*0.12;
   }
@@ -427,7 +422,7 @@ function updateNVZHint(){
 }
 
 /* -------------------------
-   Rendering (Canvas 2D)
+   Rendering
 ------------------------- */
 function drawSky(){
   ctx.save(); ctx.globalAlpha=0.06; ctx.fillStyle='#ffffff';
@@ -545,7 +540,42 @@ function loop(now){
 requestAnimationFrame(loop);
 
 /* -------------------------
-   Misc UI init
+   Win/serve utils
+------------------------- */
+function isInReceiverServiceBox(receiver,x,z){
+  const onFar=(receiver==='ai'); if(onFar && z<0) return false; if(!onFar && z>0) return false;
+  const inDepth=Math.abs(z)>=NVZ-0.02 && Math.abs(z)<=HALF_L+0.05;
+  let mustLeft; if(ball.serving==='player'){ mustLeft=(ball.serveSide==='right'); } else { mustLeft=(ball.serveSide!=='right'); }
+  const inHalf=mustLeft?(x<0):(x>0);
+  return inDepth && inHalf && (Math.abs(x)<=HALF_W+0.03);
+}
+function fault(reason, pointTo){
+  hud.fault.textContent='FAULT — '+reason; hud.fault.style.display='block'; setTimeout(()=>hud.fault.style.display='none',900);
+  if(ball.serving===pointTo){ score[pointTo]++; } else { ball.serving=pointTo; }
+  updateHUD();
+  if((score.player>=11||score.ai>=11) && Math.abs(score.player-score.ai)>=2){
+    hud.lastMsg.textContent=(score.player>score.ai?'You win!':'AI wins!')+' Refresh to play again.'; ball.inPlay=false; ball.awaitingServe=false; return;
+  }
+  resetForServe(ball.serving);
+}
+
+/* AI serve (uses stronger model) */
+let aiServeTimer=1.0;
+function aiDoServe(){
+  if(!(ball.awaitingServe && ball.serving==='ai')) return;
+  const n=0.6; const {pow, upk} = serveParams(n);
+  const toLeft=(ball.serveSide==='right');
+  const targetX=(toLeft?-1:1)*1.1;
+  const targetZ=-HALF_L + NVZ + 1.6;
+  const dx=targetX-ball.x, dz=targetZ-ball.z, L=Math.hypot(dx,dz)||1;
+  const nx=dx/L, nz=dz/L;
+  ball.vx=nx*pow; ball.vz=nz*pow; ball.vy=pow*upk;
+  ball.ox=0; ball.oy=(toLeft?1:-1)*18; ball.oz=90;
+  ball.awaitingServe=false; ball.inPlay=true; ball.lastHitter='ai'; aiServeTimer=1.0;
+}
+
+/* -------------------------
+   Init HUD
 ------------------------- */
 updateHUD();
 </script>
