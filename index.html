@@ -576,10 +576,10 @@ function update() {
     }
 
     // --- Timers ---
-    if(player.swingTimer>0) player.swingTimer--;
+    if(player.swingTimer>0){ player.swingTimer--; if(player.swingTimer<=0) player.swinging=false; }
     if(player.swingCooldown>0) player.swingCooldown--;
     if(player.hitFlash>0) player.hitFlash--;
-    if(opponent.swingTimer>0) opponent.swingTimer--;
+    if(opponent.swingTimer>0){ opponent.swingTimer--; if(opponent.swingTimer<=0) opponent.swinging=false; }
     if(opponent.swingCooldown>0) opponent.swingCooldown--;
     if(opponent.hitFlash>0) opponent.hitFlash--;
 
