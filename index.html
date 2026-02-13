@@ -332,9 +332,11 @@ function doServe(who) {
   if(who==='left'){
     ball.x=player.x+20; ball.y=player.y-60;
     ball.vx=5+player.power*2; ball.vy=-5-player.power; ball.lastHitBy='left';
+    player.swingCooldown=20;
   } else {
     ball.x=opponent.x-20; ball.y=opponent.y-60;
     ball.vx=-(5+opponent.power*2); ball.vy=-5-opponent.power; ball.lastHitBy='right';
+    opponent.swingCooldown=20;
   }
 }
 
@@ -368,14 +370,40 @@ function tryHit(p, isLob) {
     const isCrit=Math.random()<p.critChance;
     const powerMult=isCrit?1.8:1.0;
 
-    if(isLob){
-      ball.vx=dir*(3+p.power*1.5)*powerMult; ball.vy=-8-p.power*2;
-    } else if(ball.y<p.y-60){
-      ball.vx=dir*(6+p.smashPower*3)*powerMult; ball.vy=3+p.smashPower;
-    } else if(isInKitchen(p.x, p.side)){
-      ball.vx=dir*(2+p.dinkSkill*0.5)*powerMult; ball.vy=-3-p.dinkSkill*0.5;
+    if(p.side==='left'){
+      // Player: aim toward mouse cursor
+      const aimDx=mouseX-ball.x, aimDy=mouseY-ball.y;
+      const aimDist=Math.sqrt(aimDx*aimDx+aimDy*aimDy)||1;
+      const aimNx=aimDx/aimDist, aimNy=aimDy/aimDist;
+      // Ensure ball always goes toward opponent's side
+      const aimNxClamped=Math.max(0.2, aimNx);
+      if(isLob){
+        const spd=4+p.power*1.5;
+        ball.vx=aimNxClamped*(spd)*powerMult; ball.vy=-8-p.power*2;
+      } else if(ball.y<p.y-60){
+        // Smash: aim toward mouse but force downward component
+        const spd=7+p.smashPower*3;
+        ball.vx=aimNxClamped*spd*powerMult; ball.vy=Math.max(1, aimNy*spd*0.5)*powerMult;
+      } else if(isInKitchen(p.x, p.side)){
+        const spd=2.5+p.dinkSkill*0.5;
+        ball.vx=aimNxClamped*spd*powerMult; ball.vy=Math.min(-1, aimNy*spd)*powerMult;
+      } else {
+        const spd=5+p.power*2.5;
+        ball.vx=aimNxClamped*spd*powerMult; ball.vy=aimNy*spd*0.6*powerMult;
+        // Clamp vy so ball doesn't go straight into the ground
+        ball.vy=Math.max(-spd, Math.min(spd*0.4, ball.vy));
+      }
     } else {
-      ball.vx=dir*(4+p.power*2.5)*powerMult; ball.vy=-4-p.power*1.5;
+      // AI: use fixed formulas
+      if(isLob){
+        ball.vx=dir*(3+p.power*1.5)*powerMult; ball.vy=-8-p.power*2;
+      } else if(ball.y<p.y-60){
+        ball.vx=dir*(6+p.smashPower*3)*powerMult; ball.vy=3+p.smashPower;
+      } else if(isInKitchen(p.x, p.side)){
+        ball.vx=dir*(2+p.dinkSkill*0.5)*powerMult; ball.vy=-3-p.dinkSkill*0.5;
+      } else {
+        ball.vx=dir*(4+p.power*2.5)*powerMult; ball.vy=-4-p.power*1.5;
+      }
     }
 
     ball.spin=p.spinPower*dir*0.3; ball.lastHitBy=p.side; ball.bounced=false;
@@ -548,6 +576,9 @@ function update() {
       // Net collision
       if(ball.y>COURT.groundY-COURT.netHeight&&ball.y<COURT.groundY){
         if(Math.abs(ball.x-COURT.netX)<4){
+          // Push ball back to whichever side it came from
+          if(ball.vx>0) ball.x=COURT.netX-4;
+          else ball.x=COURT.netX+4;
           ball.vx*=-0.3; ball.vy*=0.5;
           addParticles(COURT.netX, ball.y, COL.net, 5);
           shakeTimer=5; shakeIntensity=2;
