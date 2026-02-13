@@ -273,6 +273,7 @@ let playerScore = 0, opponentScore = 0;
 let scoreToWin = 5;
 let servingSide = 'left';
 let serveReady = false;
+let serveDelayTimer = 0;
 let pointPause = 0;
 let selectedUpgrades = [];
 let upgradeSelection = -1;
@@ -319,23 +320,32 @@ function initMatch() {
 function resetBall() {
   ball.active=false; ball.inPlay=false; ball.trail=[];
   ball.bounced=false; ball.lastHitBy=null; ball.spin=0; ball.onFire=false;
-  serveReady=true;
+  serveReady=false;
+  serveDelayTimer=60; // ~1 second countdown before serve is allowed
   kitchenFaultTimer=0;
-  if(servingSide==='left'){ ball.x=player.x+20; ball.y=player.y-50; }
-  else{ ball.x=opponent.x-20; ball.y=opponent.y-50; }
+  // Move server to baseline for serve
+  if(servingSide==='left'){
+    player.x=COURT.leftX+30;
+    ball.x=player.x+20; ball.y=player.y-50;
+  } else {
+    opponent.x=COURT.rightX-30;
+    ball.x=opponent.x-20; ball.y=opponent.y-50;
+  }
   ball.vx=0; ball.vy=0;
 }
 
 // ---- Serve ----
 function doServe(who) {
   serveReady=false; ball.active=true; ball.inPlay=true; ball.bounced=false;
+  // Scale serve speed: gentler in early matches, faster in later ones
+  const matchScale = 0.7 + currentOpponentIdx * 0.05;
   if(who==='left'){
     ball.x=player.x+20; ball.y=player.y-60;
-    ball.vx=5+player.power*2; ball.vy=-5-player.power; ball.lastHitBy='left';
+    ball.vx=(3.5+player.power*1.5)*matchScale; ball.vy=-4.5-player.power*0.8; ball.lastHitBy='left';
     player.swingCooldown=20;
   } else {
     ball.x=opponent.x-20; ball.y=opponent.y-60;
-    ball.vx=-(5+opponent.power*2); ball.vy=-5-opponent.power; ball.lastHitBy='right';
+    ball.vx=-(3.5+opponent.power*1.5)*matchScale; ball.vy=-4.5-opponent.power*0.8; ball.lastHitBy='right';
     opponent.swingCooldown=20;
   }
 }
@@ -515,6 +525,17 @@ function update() {
   frameCount++;
 
   if(state===STATE.PLAYING){
+    // --- Serve delay countdown ---
+    if(serveDelayTimer>0){
+      serveDelayTimer-=dt;
+      if(serveDelayTimer<=0){ serveReady=true; serveDelayTimer=0; }
+    }
+    // Keep ball attached to server while waiting
+    if(!ball.active&&!ball.inPlay){
+      if(servingSide==='left'){ ball.x=player.x+20; ball.y=player.y-50; }
+      else{ ball.x=opponent.x-20; ball.y=opponent.y-50; }
+    }
+
     // --- Player input ---
     let moveX=0;
     if(keys['ArrowLeft']||keys['a']||keys['A']||touchLeft) moveX=-1;
@@ -573,15 +594,14 @@ function update() {
       ball.vy+=ball.gravity; ball.vx+=ball.spin*0.05;
       ball.x+=ball.vx; ball.y+=ball.vy;
 
-      // Net collision
+      // Net collision — ball must clear the net or the hitter loses the point
       if(ball.y>COURT.groundY-COURT.netHeight&&ball.y<COURT.groundY){
         if(Math.abs(ball.x-COURT.netX)<4){
-          // Push ball back to whichever side it came from
-          if(ball.vx>0) ball.x=COURT.netX-4;
-          else ball.x=COURT.netX+4;
-          ball.vx*=-0.3; ball.vy*=0.5;
-          addParticles(COURT.netX, ball.y, COL.net, 5);
-          shakeTimer=5; shakeIntensity=2;
+          addParticles(COURT.netX, ball.y, COL.net, 10);
+          shakeTimer=8; shakeIntensity=4;
+          // Award point to the OTHER player (hitter loses)
+          if(ball.lastHitBy==='left') scorePoint('right');
+          else scorePoint('left');
         }
       }
 
@@ -846,11 +866,16 @@ function drawBall(){
   ctx.fillStyle='#fff';
   ctx.fillRect(Math.floor(ball.x-2),Math.floor(ball.y-4),3,2);
 
-  // Serve prompt
-  if(serveReady&&!ball.inPlay&&servingSide==='left'){
-    ctx.fillStyle=`rgba(255,224,51,${0.5+0.3*Math.sin(Date.now()*0.005)})`;
+  // Serve prompt & countdown
+  if(!ball.inPlay&&servingSide==='left'){
     ctx.font='bold 12px "Courier New"'; ctx.textAlign='center';
-    ctx.fillText('CLICK or SPACE to Serve',player.x,player.y-75);
+    if(serveDelayTimer>0){
+      ctx.fillStyle=`rgba(255,224,51,0.7)`;
+      ctx.fillText('Get ready...',player.x,player.y-75);
+    } else if(serveReady){
+      ctx.fillStyle=`rgba(255,224,51,${0.5+0.3*Math.sin(Date.now()*0.005)})`;
+      ctx.fillText('CLICK or SPACE to Serve',player.x,player.y-75);
+    }
   }
 }
 
