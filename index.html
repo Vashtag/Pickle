@@ -65,17 +65,12 @@
   .player-buffs{display:flex;gap:0.3rem;justify-content:center;margin:0.5rem 0;flex-wrap:wrap}
   .buff{font-size:0.6rem;padding:0.15rem 0.4rem;border:1px solid rgba(73,208,255,0.3);border-radius:2px;color:var(--accent2);background:rgba(73,208,255,0.08)}
   /* Crosshair */
-  .crosshair{position:fixed;pointer-events:none;z-index:12;display:none}
-  .crosshair::before,.crosshair::after{content:'';position:absolute;background:rgba(255,255,255,0.5)}
-  .crosshair::before{width:20px;height:2px;left:-10px;top:-1px}
-  .crosshair::after{width:2px;height:20px;left:-1px;top:-10px}
 </style>
 </head>
 <body>
 <div id="wrap"><canvas id="game"></canvas></div>
 <div id="scanlines"></div>
 <div id="crt-glow"></div>
-<div class="crosshair" id="crosshair"></div>
 
 <!-- HUD -->
 <div class="hud" id="hud" style="display:none">
@@ -208,10 +203,8 @@ const screenChampion = document.getElementById('screenChampion');
 const matchResultEl = document.getElementById('matchResult');
 const hud = document.getElementById('hud');
 const slowmoBar = document.getElementById('slowmoBar');
-const crosshair = document.getElementById('crosshair');
 
 let run = null, matchState = null, upgrades = [];
-let mouseX = VW / 2, mouseY = VH / 2;
 let mouseClicked = false;
 const input = { up:false, down:false, left:false, right:false };
 let swingBuffer = 0;
@@ -985,7 +978,6 @@ function hideAllScreens() {
   screenUpgrade.style.display = 'none'; screenGameOver.style.display = 'none';
   screenChampion.style.display = 'none'; matchResultEl.style.display = 'none';
   hud.style.display = 'none'; slowmoBar.style.display = 'none';
-  crosshair.style.display = 'none';
 }
 
 function startNewRun() {
@@ -1069,18 +1061,9 @@ function showChampion() {
 // ============================================================
 // INPUT
 // ============================================================
-function getCanvasCoords(clientX, clientY) {
-  const rect = canvas.getBoundingClientRect();
-  return { x: ((clientX - rect.left) / rect.width) * VW, y: ((clientY - rect.top) / rect.height) * VH };
-}
-
-canvas.addEventListener('mousemove', e => {
-  const c = getCanvasCoords(e.clientX, e.clientY);
-  mouseX = c.x; mouseY = c.y;
-});
 canvas.addEventListener('mousedown', e => { mouseClicked = true; swingBuffer = SWING_BUFFER_MAX; e.preventDefault(); });
-canvas.addEventListener('touchmove', e => { e.preventDefault(); const c = getCanvasCoords(e.touches[0].clientX, e.touches[0].clientY); mouseX = c.x; mouseY = c.y; }, { passive: false });
-canvas.addEventListener('touchstart', e => { e.preventDefault(); mouseClicked = true; swingBuffer = SWING_BUFFER_MAX; const c = getCanvasCoords(e.touches[0].clientX, e.touches[0].clientY); mouseX = c.x; mouseY = c.y; }, { passive: false });
+canvas.addEventListener('touchmove', e => { e.preventDefault(); }, { passive: false });
+canvas.addEventListener('touchstart', e => { e.preventDefault(); mouseClicked = true; swingBuffer = SWING_BUFFER_MAX; }, { passive: false });
 
 window.addEventListener('keydown', e => {
   if (e.code === 'ArrowUp' || e.code === 'KeyW') input.up = true;
