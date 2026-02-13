@@ -103,7 +103,7 @@
     Between matches, choose powerful upgrades.<br/>
     <span class="highlight">Lose once and it's all over.</span></p>
     <p style="margin-top:0.6rem;font-size:0.75rem">
-      <strong>Controls:</strong> Move mouse to position &bull; Click to swing when ball is near<br/>
+      <strong>Controls:</strong> Move with WASD / Arrow Keys &bull; Click (or F) to swing<br/>
       Spacebar = activate Slow-Mo (when available)
     </p>
     <div style="margin-top:1rem"><button class="btn" id="btnStart">Enter Tournament</button></div>
@@ -183,20 +183,18 @@ const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
 
 // ============================================================
-// Camera: first-person behind the baseline looking at opponent
+// 2.5D top-down projection (orthographic court + fake height)
 // ============================================================
-const CAM = { x: 0, y: 1.5, z: -0.3, fov: 75 };
-let focal = 1;
+const COURT_PAD = 44;
+let courtScale = 1;
+let courtOffsetX = 0;
+let courtOffsetY = 0;
 
-function project(wx, wy, wz) {
-  // world -> camera space (camera looks down +Z axis)
-  const dx = wx - CAM.x, dy = wy - CAM.y, dz = wz - CAM.z;
-  if (dz < 0.05) return null;
-  const sx = VW / 2 + (dx / dz) * focal;
-  const sy = VH / 2 - (dy / dz) * focal;
-  // Cap scale so close objects don't explode in size
-  const rawScale = focal / dz;
-  return { x: sx, y: sy, z: dz, scale: Math.min(rawScale, 120) };
+function worldToScreen(wx, wz) {
+  return {
+    x: courtOffsetX + (wx + CW / 2) * courtScale,
+    y: courtOffsetY + wz * courtScale
+  };
 }
 
 // ============================================================
@@ -215,8 +213,13 @@ const crosshair = document.getElementById('crosshair');
 let run = null, matchState = null, upgrades = [];
 let mouseX = VW / 2, mouseY = VH / 2;
 let mouseClicked = false;
+const input = { up:false, down:false, left:false, right:false };
+let swingBuffer = 0;
+const SWING_BUFFER_MAX = 0.18;
 let lastTime = 0, clock = 0;
 let gamePhase = 'title';
+
+function inKitchen(z) { return Math.abs(z - NET_Z) <= KITCHEN_D; }
 
 // ============================================================
 // OPPONENT GENERATION
@@ -324,10 +327,10 @@ function createMatch(opp, stats, roundIdx) {
     p1Score: 0, p2Score: 0,
 
     // Player position (x lateral on near side)
-    player: { x: 0, z: 0.5, reachR: 0.9 * stats.reachMult, speed: 4.5 * stats.speedMult },
+    player: { x: 0, z: 1.2, reachR: 0.9 * stats.reachMult, speed: 4.5 * stats.speedMult },
 
     // Opponent position (x lateral on far side)
-    enemy: { x: 0, z: CL - 0.5, targetX: 0, reactionTimer: 0, reachR: opp.reachRadius * (opp.accuracy * 0.5 + 0.7), speed: opp.speed * stats.oppDebuff, swingAnim: 0 },
+    enemy: { x: 0, z: CL - 1.2, targetX: 0, targetZ: CL - 1.2, reactionTimer: 0, reachR: opp.reachRadius * (opp.accuracy * 0.5 + 0.7), speed: opp.speed * stats.oppDebuff, swingAnim: 0 },
 
     // Ball 3D
     ball: {
@@ -370,7 +373,7 @@ function resetBall(m) {
   const isP1 = m.serving === 'p1';
   m.ball.x = isP1 ? m.player.x : m.enemy.x;
   m.ball.y = 1.0;
-  m.ball.z = isP1 ? 1.5 : CL - 1.5;
+  m.ball.z = isP1 ? m.player.z + 0.35 : m.enemy.z - 0.35;
   m.ball.vx = 0; m.ball.vy = 0; m.ball.vz = 0;
   m.ball.active = false; m.ball.bounced = false;
   m.ball.lastHitBy = 'none'; m.ball.trail = []; m.ball.spin = 0;
@@ -389,7 +392,7 @@ function serveBall(m) {
   const lateralAim = (Math.random() - 0.5) * 1.5;
   m.ball.x = isP1 ? m.player.x : m.enemy.x;
   m.ball.y = 1.3;
-  m.ball.z = isP1 ? 1.5 : CL - 1.5;
+  m.ball.z = isP1 ? m.player.z + 0.35 : m.enemy.z - 0.35;
   m.ball.vx = lateralAim;
   m.ball.vy = 2.5; // slight arc up
   m.ball.vz = dir * speed;
@@ -411,6 +414,8 @@ function updateMatch(m, dt) {
     updateParticles(m, dt);
     return;
   }
+
+  swingBuffer = Math.max(0, swingBuffer - dt);
 
   // Slow-mo
   let timeScale = 1;
@@ -439,8 +444,9 @@ function updateMatch(m, dt) {
       if (m.serving === 'p1') {
         m.autoServeTimer += sDt;
         // Auto-serve on click or after 2s
-        if (mouseClicked || m.autoServeTimer > 2.0) {
+        if (mouseClicked || swingBuffer > 0 || m.autoServeTimer > 2.0) {
           mouseClicked = false;
+          swingBuffer = 0;
           serveBall(m);
         }
       } else {
@@ -452,13 +458,15 @@ function updateMatch(m, dt) {
     }
   }
 
-  // Player movement: mouse X maps to court lateral position
+  // Player movement: 2D movement on own side (WASD/Arrows)
   {
-    const targetX = ((mouseX / VW) - 0.5) * CW * 1.2;
-    const diff = targetX - m.player.x;
-    const maxMove = m.player.speed * sDt;
-    m.player.x += Math.sign(diff) * Math.min(Math.abs(diff), maxMove);
+    const moveX = (input.right ? 1 : 0) - (input.left ? 1 : 0);
+    const moveZ = (input.down ? 1 : 0) - (input.up ? 1 : 0);
+    const len = Math.hypot(moveX, moveZ) || 1;
+    m.player.x += (moveX / len) * m.player.speed * sDt;
+    m.player.z += (moveZ / len) * m.player.speed * sDt;
     m.player.x = clamp(m.player.x, -CW / 2, CW / 2);
+    m.player.z = clamp(m.player.z, 0.45, NET_Z - 0.2);
   }
 
   // Opponent AI
@@ -555,12 +563,14 @@ function updateMatch(m, dt) {
   if (m.ball.lastHitBy !== 'p1' && m.ball.z < NET_Z && m.ball.z < 3.0 && m.ball.y < 2.0) {
     const dx = m.ball.x - m.player.x;
     const dz = m.ball.z - m.player.z;
-    const dist = Math.sqrt(dx * dx + dz * dz);
+    const dist = Math.max(0.001, Math.sqrt(dx * dx + dz * dz));
     // Auto-hit if close, or click-hit with larger radius
-    const hitR = m.player.reachR * (mouseClicked ? 1.3 : 0.95);
+    const swingNow = mouseClicked || swingBuffer > 0;
+    const hitR = m.player.reachR * (swingNow ? 1.3 : 0.95);
     if (dist < hitR && m.ball.y < 1.8) {
       playerHit(m);
       mouseClicked = false;
+      swingBuffer = 0;
     }
   }
 
@@ -568,7 +578,7 @@ function updateMatch(m, dt) {
   if (m.ball.lastHitBy !== 'p2' && m.ball.z > NET_Z && m.ball.z > CL - 3.5 && m.ball.y < 2.0) {
     const dx = m.ball.x - m.enemy.x;
     const dz = m.ball.z - m.enemy.z;
-    const dist = Math.sqrt(dx * dx + dz * dz);
+    const dist = Math.max(0.001, Math.sqrt(dx * dx + dz * dz));
     if (dist < m.enemy.reachR && m.ball.y < 1.8) {
       enemyHit(m);
     }
@@ -586,23 +596,28 @@ function updateMatch(m, dt) {
 }
 
 function playerHit(m) {
+  if (!m.ball.bounced && inKitchen(m.player.z)) {
+    scorePoint(m, 'p2');
+    return;
+  }
   m.playerSwingAnim = 1;
   m.ball.lastHitBy = 'p1';
   m.ball.bounced = false;
   m.rallyCount++;
   Sfx.hit();
 
-  // Aim: mouse Y determines depth (high mouse = deep shot, low = drop shot near net)
-  const aimDepth = 1 - clamp(mouseY / VH, 0, 1); // 0=short, 1=deep
-  const targetZ = NET_Z + 1.5 + aimDepth * (CL - NET_Z - 3);
-  // Lateral aim: where mouse is relative to center
-  const aimLateral = ((mouseX / VW) - 0.5) * m.stats.aimMult;
-  const targetX = aimLateral * CW * 0.8;
+  // Aim in 2.5D: movement direction biases shot placement.
+  const moveX = (input.right ? 1 : 0) - (input.left ? 1 : 0);
+  const moveZ = (input.down ? 1 : 0) - (input.up ? 1 : 0);
+  const aimDepth = clamp(0.7 - (moveZ * 0.25), 0.15, 0.95);
+  const targetZ = NET_Z + 0.9 + aimDepth * (CL - NET_Z - 1.4);
+  const aimLateral = clamp((m.player.x / (CW / 2)) * 0.45 + moveX * 0.35, -1, 1) * m.stats.aimMult;
+  const targetX = aimLateral * CW * 0.48;
 
   const speed = BALL_SPEED_BASE * m.stats.powerMult * (0.9 + m.rallyCount * 0.015);
   const dx = targetX - m.ball.x;
   const dz = targetZ - m.ball.z;
-  const dist = Math.sqrt(dx * dx + dz * dz);
+  const dist = Math.max(0.001, Math.sqrt(dx * dx + dz * dz));
   const arc = 2.5 + (1 - aimDepth) * 2.0; // higher arc for drop shots
 
   m.ball.vx = (dx / dist) * speed * 0.35;
@@ -618,6 +633,10 @@ function playerHit(m) {
 }
 
 function enemyHit(m) {
+  if (!m.ball.bounced && inKitchen(m.enemy.z)) {
+    scorePoint(m, 'p1');
+    return;
+  }
   m.enemy.swingAnim = 1;
   m.ball.lastHitBy = 'p2';
   m.ball.bounced = false;
@@ -626,17 +645,17 @@ function enemyHit(m) {
 
   const opp = m.opp;
   // AI aim: target a spot on player's side
-  const targetZ = 0.5 + Math.random() * (NET_Z - KITCHEN_D - 1);
+  const targetZ = 0.55 + Math.random() * (NET_Z - 1.1);
   const targetX = (Math.random() - 0.5) * CW * opp.accuracy;
   const speed = BALL_SPEED_BASE * (0.8 + opp.aggression * 0.4) * (0.9 + m.rallyCount * 0.01);
 
   const dx = targetX - m.ball.x;
   const dz = targetZ - m.ball.z;
-  const dist = Math.sqrt(dx * dx + dz * dz);
+  const dist = Math.max(0.001, Math.sqrt(dx * dx + dz * dz));
   const arc = 2.0 + Math.random() * 2.0;
 
   m.ball.vx = (dx / dist) * speed * 0.35;
-  m.ball.vz = (dz / dist) * speed * -1; // toward player
+  m.ball.vz = (dz / dist) * speed;
   m.ball.vy = arc;
 
   if (opp.spinSkill > 0.3) {
@@ -656,26 +675,36 @@ function updateEnemyAI(m, dt) {
   const e = m.enemy;
 
   let targetX = 0;
+  let targetZ = CL - 1.2;
   if (m.ball.active && m.ball.vz > 0) {
-    // Ball coming toward opponent - predict landing
+    // Ball coming toward opponent - predict intercept
     const timeToArrive = Math.max(0.1, (e.z - m.ball.z) / Math.max(0.1, m.ball.vz));
     targetX = m.ball.x + m.ball.vx * timeToArrive;
+    targetZ = clamp(m.ball.z + m.ball.vz * timeToArrive, NET_Z + 0.25, CL - 0.35);
     targetX += (Math.random() - 0.5) * (1 - opp.accuracy) * 2.5;
   } else if (m.ball.active && m.ball.vz < 0) {
-    // Ball going away - return to center
     targetX = (Math.random() - 0.5) * 1.0;
+    targetZ = CL - 1.1 + (Math.random() - 0.5) * 0.5;
   }
 
   e.reactionTimer -= dt;
   if (e.reactionTimer <= 0) {
     e.targetX = targetX;
+    e.targetZ = targetZ;
     e.reactionTimer = opp.reaction * (0.7 + Math.random() * 0.6);
   }
 
-  const diff = e.targetX - e.x;
   const maxMove = e.speed * dt;
-  e.x += Math.sign(diff) * Math.min(Math.abs(diff), maxMove);
+  const dx = e.targetX - e.x;
+  const dz = e.targetZ - e.z;
+  const len = Math.hypot(dx, dz);
+  if (len > 0.001) {
+    const step = Math.min(maxMove, len);
+    e.x += (dx / len) * step;
+    e.z += (dz / len) * step;
+  }
   e.x = clamp(e.x, -CW / 2, CW / 2);
+  e.z = clamp(e.z, NET_Z + 0.2, CL - 0.2);
 }
 
 // ============================================================
@@ -740,7 +769,7 @@ function scorePoint(m, who) {
 }
 
 // ============================================================
-// RENDERING - First Person 3D
+// RENDERING - 2.5D top-down
 // ============================================================
 function drawGame(m) {
   ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -748,114 +777,69 @@ function drawGame(m) {
   ctx.save();
   ctx.scale(canvas.width / VW, canvas.height / VH);
 
-  // Sky gradient
-  const skyGrad = ctx.createLinearGradient(0, 0, 0, VH * 0.5);
-  skyGrad.addColorStop(0, '#0a0e1a');
-  skyGrad.addColorStop(1, '#1a2040');
-  ctx.fillStyle = skyGrad;
+  const bg = ctx.createLinearGradient(0, 0, 0, VH);
+  bg.addColorStop(0, '#0a1424');
+  bg.addColorStop(1, '#05080f');
+  ctx.fillStyle = bg;
   ctx.fillRect(0, 0, VW, VH);
 
-  // Ground plane
-  const horizon = project(0, 0, 100);
-  if (horizon) {
-    const grd = ctx.createLinearGradient(0, horizon.y, 0, VH);
-    grd.addColorStop(0, '#0a2a0a');
-    grd.addColorStop(1, '#061206');
-    ctx.fillStyle = grd;
-    ctx.fillRect(0, horizon.y, VW, VH - horizon.y);
-  }
-
-  // Draw court surface
   drawCourtSurface();
-
-  // Draw net
   drawNet();
 
-  // Draw opponent
-  if (m) drawOpponent(m);
-
-  // Draw ball shadow
-  if (m && m.ball.active) {
-    drawBallShadow(m);
-  }
-
-  // Draw ball trail
   if (m) {
+    drawOpponent(m);
+
     for (const tr of m.ball.trail) {
       if (tr.t <= 0) continue;
-      const p = project(tr.x, tr.y, tr.z);
-      if (!p) continue;
+      const pt = worldToScreen(tr.x, tr.z);
+      const trY = pt.y - tr.y * 18;
       ctx.globalAlpha = tr.t * 0.25 * (m.ball.ghost || 1);
       ctx.fillStyle = '#ffe033';
-      const r = clamp(4 * p.scale * tr.t, 1, 12);
-      ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI * 2); ctx.fill();
+      const r = clamp((BALL_RADIUS * 85 + tr.y * 2) * tr.t, 1, 10);
+      ctx.beginPath(); ctx.arc(pt.x, trY, r, 0, Math.PI * 2); ctx.fill();
     }
     ctx.globalAlpha = 1;
-  }
 
-  // Draw ball
-  if (m && (m.ball.active || m.serveReady)) {
-    const bp = project(m.ball.x, m.ball.y, m.ball.z);
-    if (bp) {
-      const br = clamp(BALL_RADIUS * 12 * bp.scale, 2, 18);
+    if (m.ball.active || m.serveReady) {
+      drawBallShadow(m);
+      const bp = worldToScreen(m.ball.x, m.ball.z);
+      const by = bp.y - m.ball.y * 18;
+      const br = clamp(BALL_RADIUS * 90 + m.ball.y * 2, 3, 12);
       ctx.globalAlpha = m.ball.ghost;
-      // Glow
       ctx.shadowColor = '#ffe033';
-      ctx.shadowBlur = Math.min(12, br * 1.5);
+      ctx.shadowBlur = 10;
       ctx.fillStyle = '#ffe033';
-      ctx.beginPath(); ctx.arc(bp.x, bp.y, br, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(bp.x, by, br, 0, Math.PI * 2); ctx.fill();
       ctx.shadowBlur = 0;
-      // Holes
-      ctx.fillStyle = 'rgba(180,150,0,0.5)';
-      for (let a = 0; a < 4; a++) {
-        const ang = a * Math.PI / 2 + clock * 4;
-        ctx.beginPath(); ctx.arc(bp.x + Math.cos(ang) * br * 0.5, bp.y + Math.sin(ang) * br * 0.5, br * 0.15, 0, Math.PI * 2); ctx.fill();
-      }
       ctx.globalAlpha = 1;
     }
-  }
 
-  // Draw player paddle (first person, at bottom of screen)
-  if (m) drawPlayerPaddle(m);
+    drawPlayerPaddle(m);
 
-  // Particles
-  if (m) {
     for (const p of m.particles) {
-      const pp = project(p.x, p.y, p.z);
-      if (!pp) continue;
+      const pp = worldToScreen(p.x, p.z);
       ctx.globalAlpha = clamp(p.life / 0.3, 0, 1);
       ctx.fillStyle = p.color;
-      const sz = clamp(3 * pp.scale, 1, 10);
-      ctx.fillRect(pp.x - sz / 2, pp.y - sz / 2, sz, sz);
+      const sz = clamp(2 + p.y * 2, 1, 6);
+      ctx.fillRect(pp.x - sz / 2, pp.y - p.y * 10 - sz / 2, sz, sz);
     }
     ctx.globalAlpha = 1;
   }
 
-  // Slow-mo tint
   if (m && m.slowmoActive && m.slowmoCharge > 0) {
-    ctx.fillStyle = 'rgba(73,208,255,0.06)';
+    ctx.fillStyle = 'rgba(73,208,255,0.08)';
     ctx.fillRect(0, 0, VW, VH);
   }
 
-  // Vignette
-  const vig = ctx.createRadialGradient(VW / 2, VH / 2, VW * 0.2, VW / 2, VH / 2, VW * 0.7);
-  vig.addColorStop(0, 'rgba(0,0,0,0)');
-  vig.addColorStop(1, 'rgba(0,0,0,0.4)');
-  ctx.fillStyle = vig;
-  ctx.fillRect(0, 0, VW, VH);
-
-  // Point flash text
   if (m && m.pointFlash > 0) {
     ctx.globalAlpha = Math.min(1, m.pointFlash);
     ctx.fillStyle = m.pointText === 'POINT!' ? '#49d0ff' : '#ff6b4a';
     ctx.font = 'bold 40px monospace';
     ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
     ctx.fillText(m.pointText, VW / 2, VH * 0.35);
     ctx.globalAlpha = 1;
   }
 
-  // Rally counter
   if (m && m.rallyCount > 3 && m.ball.active) {
     ctx.fillStyle = 'rgba(255,255,255,0.35)';
     ctx.font = '12px monospace';
@@ -863,13 +847,12 @@ function drawGame(m) {
     ctx.fillText('RALLY x' + m.rallyCount, VW / 2, 36);
   }
 
-  // Serve indicator
   if (m && m.playState === 'serving' && m.serveReady && m.serving === 'p1') {
     ctx.globalAlpha = 0.6 + Math.sin(clock * 6) * 0.3;
     ctx.fillStyle = '#49d0ff';
     ctx.font = 'bold 16px monospace';
     ctx.textAlign = 'center';
-    ctx.fillText('CLICK TO SERVE', VW / 2, VH * 0.7);
+    ctx.fillText('CLICK TO SERVE', VW / 2, VH * 0.9);
     ctx.globalAlpha = 1;
   }
 
@@ -877,225 +860,96 @@ function drawGame(m) {
 }
 
 function drawCourtSurface() {
-  // Court as a projected quad
-  const corners = [
-    project(-CW / 2, 0, 0),
-    project(CW / 2, 0, 0),
-    project(CW / 2, 0, CL),
-    project(-CW / 2, 0, CL)
-  ];
-  if (!corners[0] || !corners[1] || !corners[2] || !corners[3]) return;
+  const w = CW * courtScale;
+  const h = CL * courtScale;
+  ctx.fillStyle = '#195f2a';
+  ctx.fillRect(courtOffsetX, courtOffsetY, w, h);
 
-  // Main court
-  ctx.fillStyle = '#1a5a2a';
-  ctx.beginPath();
-  ctx.moveTo(corners[0].x, corners[0].y);
-  ctx.lineTo(corners[1].x, corners[1].y);
-  ctx.lineTo(corners[2].x, corners[2].y);
-  ctx.lineTo(corners[3].x, corners[3].y);
-  ctx.closePath();
-  ctx.fill();
+  // Kitchen zones
+  ctx.fillStyle = 'rgba(255,138,61,0.10)';
+  const nearY = courtOffsetY + (NET_Z - KITCHEN_D) * courtScale;
+  const farY = courtOffsetY + NET_Z * courtScale;
+  ctx.fillRect(courtOffsetX, nearY, w, KITCHEN_D * courtScale);
+  ctx.fillRect(courtOffsetX, farY, w, KITCHEN_D * courtScale);
 
-  // Kitchen zones (slightly different shade)
-  const kitNear = [
-    project(-CW / 2, 0, NET_Z - KITCHEN_D),
-    project(CW / 2, 0, NET_Z - KITCHEN_D),
-    project(CW / 2, 0, NET_Z),
-    project(-CW / 2, 0, NET_Z)
-  ];
-  const kitFar = [
-    project(-CW / 2, 0, NET_Z),
-    project(CW / 2, 0, NET_Z),
-    project(CW / 2, 0, NET_Z + KITCHEN_D),
-    project(-CW / 2, 0, NET_Z + KITCHEN_D)
-  ];
-  ctx.fillStyle = 'rgba(255,138,61,0.08)';
-  if (kitNear[0] && kitNear[1] && kitNear[2] && kitNear[3]) {
-    ctx.beginPath();
-    ctx.moveTo(kitNear[0].x, kitNear[0].y); ctx.lineTo(kitNear[1].x, kitNear[1].y);
-    ctx.lineTo(kitNear[2].x, kitNear[2].y); ctx.lineTo(kitNear[3].x, kitNear[3].y);
-    ctx.closePath(); ctx.fill();
-  }
-  if (kitFar[0] && kitFar[1] && kitFar[2] && kitFar[3]) {
-    ctx.beginPath();
-    ctx.moveTo(kitFar[0].x, kitFar[0].y); ctx.lineTo(kitFar[1].x, kitFar[1].y);
-    ctx.lineTo(kitFar[2].x, kitFar[2].y); ctx.lineTo(kitFar[3].x, kitFar[3].y);
-    ctx.closePath(); ctx.fill();
-  }
+  ctx.strokeStyle = 'rgba(232,232,208,0.55)';
+  ctx.lineWidth = 2;
+  ctx.strokeRect(courtOffsetX, courtOffsetY, w, h);
 
-  // Court lines
-  ctx.strokeStyle = 'rgba(232,232,208,0.5)';
+  const centerX = courtOffsetX + w / 2;
+  ctx.setLineDash([6, 4]);
+  ctx.strokeStyle = 'rgba(232,232,208,0.25)';
+  ctx.beginPath(); ctx.moveTo(centerX, courtOffsetY); ctx.lineTo(centerX, courtOffsetY + h); ctx.stroke();
+  ctx.setLineDash([]);
+
+  ctx.strokeStyle = 'rgba(255,138,61,0.45)';
   ctx.lineWidth = 1.5;
-  // Outer boundary
   ctx.beginPath();
-  ctx.moveTo(corners[0].x, corners[0].y); ctx.lineTo(corners[1].x, corners[1].y);
-  ctx.lineTo(corners[2].x, corners[2].y); ctx.lineTo(corners[3].x, corners[3].y);
-  ctx.closePath(); ctx.stroke();
+  ctx.moveTo(courtOffsetX, nearY); ctx.lineTo(courtOffsetX + w, nearY);
+  ctx.moveTo(courtOffsetX, farY + KITCHEN_D * courtScale); ctx.lineTo(courtOffsetX + w, farY + KITCHEN_D * courtScale);
+  ctx.stroke();
 
-  // Center line (lengthwise)
-  const cNear = project(0, 0, 0);
-  const cFar = project(0, 0, CL);
-  if (cNear && cFar) {
-    ctx.setLineDash([6, 4]);
-    ctx.strokeStyle = 'rgba(232,232,208,0.2)';
-    ctx.beginPath(); ctx.moveTo(cNear.x, cNear.y); ctx.lineTo(cFar.x, cFar.y); ctx.stroke();
-    ctx.setLineDash([]);
-  }
-
-  // Kitchen lines
-  ctx.strokeStyle = 'rgba(255,138,61,0.3)';
-  ctx.lineWidth = 1;
-  const kl1 = project(-CW / 2, 0, NET_Z - KITCHEN_D);
-  const kr1 = project(CW / 2, 0, NET_Z - KITCHEN_D);
-  const kl2 = project(-CW / 2, 0, NET_Z + KITCHEN_D);
-  const kr2 = project(CW / 2, 0, NET_Z + KITCHEN_D);
-  if (kl1 && kr1) { ctx.beginPath(); ctx.moveTo(kl1.x, kl1.y); ctx.lineTo(kr1.x, kr1.y); ctx.stroke(); }
-  if (kl2 && kr2) { ctx.beginPath(); ctx.moveTo(kl2.x, kl2.y); ctx.lineTo(kr2.x, kr2.y); ctx.stroke(); }
-
-  // Baseline labels
-  ctx.fillStyle = 'rgba(255,255,255,0.08)';
-  ctx.font = '8px monospace';
+  ctx.fillStyle = 'rgba(255,255,255,0.12)';
+  ctx.font = '10px monospace';
   ctx.textAlign = 'center';
-  const kitLabel = project(0, 0, NET_Z - KITCHEN_D + 0.3);
-  if (kitLabel) ctx.fillText('KITCHEN', kitLabel.x, kitLabel.y);
+  ctx.fillText('KITCHEN', centerX, nearY + 14);
+  ctx.fillText('KITCHEN', centerX, farY + 14);
 }
 
 function drawNet() {
-  const posts = 7;
-  ctx.strokeStyle = 'rgba(220,220,200,0.6)';
-  ctx.lineWidth = 1.5;
-
-  // Net posts and top rope
-  for (let i = 0; i <= posts; i++) {
-    const x = -CW / 2 + (CW / posts) * i;
-    const bot = project(x, 0, NET_Z);
-    const top = project(x, NET_H, NET_Z);
-    if (bot && top) {
-      ctx.beginPath(); ctx.moveTo(bot.x, bot.y); ctx.lineTo(top.x, top.y); ctx.stroke();
-    }
-  }
-  // Top rope
-  const tl = project(-CW / 2, NET_H, NET_Z);
-  const tr = project(CW / 2, NET_H, NET_Z);
-  if (tl && tr) {
-    ctx.lineWidth = 2;
-    ctx.beginPath(); ctx.moveTo(tl.x, tl.y); ctx.lineTo(tr.x, tr.y); ctx.stroke();
-  }
-  // Net mesh (horizontal lines)
-  ctx.strokeStyle = 'rgba(220,220,200,0.15)';
-  ctx.lineWidth = 0.5;
-  for (let h = 0.15; h < NET_H; h += 0.15) {
-    const l = project(-CW / 2, h, NET_Z);
-    const r = project(CW / 2, h, NET_Z);
-    if (l && r) { ctx.beginPath(); ctx.moveTo(l.x, l.y); ctx.lineTo(r.x, r.y); ctx.stroke(); }
-  }
+  const y = courtOffsetY + NET_Z * courtScale;
+  ctx.strokeStyle = 'rgba(220,220,200,0.75)';
+  ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.moveTo(courtOffsetX, y); ctx.lineTo(courtOffsetX + CW * courtScale, y); ctx.stroke();
 }
 
 function drawOpponent(m) {
   const e = m.enemy;
-  // Draw opponent as a stylized figure at the far side
-  const footL = project(e.x - 0.25, 0, e.z);
-  const footR = project(e.x + 0.25, 0, e.z);
-  const hip = project(e.x, 0.5, e.z);
-  const shoulder = project(e.x, 1.2, e.z);
-  const head = project(e.x, 1.6, e.z);
-  if (!footL || !head || !shoulder || !hip) return;
+  const p = worldToScreen(e.x, e.z);
+  const swing = e.swingAnim > 0 ? Math.sin(e.swingAnim * Math.PI) : 0;
 
-  const col = m.opp.color;
-  ctx.strokeStyle = col;
-  ctx.lineWidth = Math.max(1.5, 3 * head.scale);
-  ctx.lineCap = 'round';
+  ctx.fillStyle = m.opp.color;
+  ctx.beginPath(); ctx.arc(p.x, p.y, 11, 0, Math.PI * 2); ctx.fill();
 
-  // Legs
-  if (footR) {
-    ctx.beginPath(); ctx.moveTo(footL.x, footL.y); ctx.lineTo(hip.x, hip.y); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(footR.x, footR.y); ctx.lineTo(hip.x, hip.y); ctx.stroke();
-  }
-  // Body
-  ctx.beginPath(); ctx.moveTo(hip.x, hip.y); ctx.lineTo(shoulder.x, shoulder.y); ctx.stroke();
-  // Arms + paddle
-  const armSwing = e.swingAnim > 0 ? Math.sin(e.swingAnim * Math.PI) * 0.5 : 0;
-  const handR = project(e.x + 0.5 + armSwing, 1.0, e.z - 0.3);
-  const handL = project(e.x - 0.35, 1.0, e.z);
-  if (handR) { ctx.beginPath(); ctx.moveTo(shoulder.x, shoulder.y); ctx.lineTo(handR.x, handR.y); ctx.stroke(); }
-  if (handL) { ctx.beginPath(); ctx.moveTo(shoulder.x, shoulder.y); ctx.lineTo(handL.x, handL.y); ctx.stroke(); }
-  // Head
-  const headR = Math.max(3, 8 * head.scale);
-  ctx.fillStyle = col;
-  ctx.beginPath(); ctx.arc(head.x, head.y, headR, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = '#eee';
+  ctx.lineWidth = 4;
+  ctx.beginPath();
+  ctx.moveTo(p.x + 6, p.y - 2);
+  ctx.lineTo(p.x + 15 + swing * 8, p.y - 14);
+  ctx.stroke();
 
-  // Paddle in hand
-  if (handR) {
-    const paddleTop = project(e.x + 0.5 + armSwing, 1.35, e.z - 0.3);
-    if (paddleTop) {
-      ctx.strokeStyle = '#eee';
-      ctx.lineWidth = Math.max(2, 5 * head.scale);
-      ctx.beginPath(); ctx.moveTo(handR.x, handR.y); ctx.lineTo(paddleTop.x, paddleTop.y); ctx.stroke();
-    }
-  }
-
-  // Name tag
   ctx.fillStyle = 'rgba(255,255,255,0.4)';
   ctx.font = '9px monospace';
   ctx.textAlign = 'center';
-  ctx.fillText(m.opp.name.split(' ')[0], head.x, head.y - headR - 4);
+  ctx.fillText(m.opp.name.split(' ')[0], p.x, p.y - 16);
 }
 
 function drawBallShadow(m) {
-  const sp = project(m.ball.x, 0.01, m.ball.z);
-  if (!sp) return;
-  ctx.globalAlpha = 0.3;
+  const sp = worldToScreen(m.ball.x, m.ball.z);
+  ctx.globalAlpha = 0.22;
   ctx.fillStyle = '#000';
-  const sr = clamp(5 * sp.scale, 2, 20);
-  ctx.beginPath(); ctx.ellipse(sp.x, sp.y, sr, sr * 0.4, 0, 0, Math.PI * 2); ctx.fill();
+  const sr = clamp(7 - m.ball.y * 0.8, 2, 8);
+  ctx.beginPath(); ctx.ellipse(sp.x, sp.y, sr, sr * 0.65, 0, 0, Math.PI * 2); ctx.fill();
   ctx.globalAlpha = 1;
 }
 
 function drawPlayerPaddle(m) {
-  // First-person paddle at bottom of screen
+  const p = worldToScreen(m.player.x, m.player.z);
   const swing = m.playerSwingAnim > 0 ? Math.sin(m.playerSwingAnim * Math.PI) : 0;
-  const baseX = VW / 2 + (m.player.x / (CW / 2)) * VW * 0.15;
-  const baseY = VH - 40 + swing * -30;
+  const r = 12 * m.stats.reachMult;
 
-  // Paddle handle
-  ctx.strokeStyle = '#8B6914';
-  ctx.lineWidth = 6;
-  ctx.lineCap = 'round';
-  ctx.beginPath();
-  ctx.moveTo(baseX + 20, VH + 10);
-  ctx.lineTo(baseX + 5, baseY + 25);
-  ctx.stroke();
-
-  // Paddle face
   ctx.fillStyle = '#49d0ff';
   ctx.shadowColor = '#49d0ff';
-  ctx.shadowBlur = swing > 0.3 ? 10 : 4;
-  const pw = 28 * m.stats.reachMult;
-  const ph = 35 * m.stats.reachMult;
-  const px = baseX + 5 - pw / 2;
-  const py = baseY + 25 - ph;
-
-  // Rounded rect paddle
-  const rr = 6;
-  ctx.beginPath();
-  ctx.moveTo(px + rr, py);
-  ctx.lineTo(px + pw - rr, py);
-  ctx.quadraticCurveTo(px + pw, py, px + pw, py + rr);
-  ctx.lineTo(px + pw, py + ph - rr);
-  ctx.quadraticCurveTo(px + pw, py + ph, px + pw - rr, py + ph);
-  ctx.lineTo(px + rr, py + ph);
-  ctx.quadraticCurveTo(px, py + ph, px, py + ph - rr);
-  ctx.lineTo(px, py + rr);
-  ctx.quadraticCurveTo(px, py, px + rr, py);
-  ctx.closePath();
-  ctx.fill();
-
-  // Paddle edge detail
-  ctx.strokeStyle = 'rgba(255,255,255,0.3)';
-  ctx.lineWidth = 1;
-  ctx.stroke();
-
+  ctx.shadowBlur = swing > 0.3 ? 10 : 3;
+  ctx.beginPath(); ctx.arc(p.x, p.y, r + swing * 4, 0, Math.PI * 2); ctx.fill();
   ctx.shadowBlur = 0;
+
+  ctx.strokeStyle = '#8B6914';
+  ctx.lineWidth = 4;
+  ctx.beginPath();
+  ctx.moveTo(p.x, p.y + r * 0.2);
+  ctx.lineTo(p.x, p.y + r + 11);
+  ctx.stroke();
 }
 
 // ============================================================
@@ -1169,7 +1023,7 @@ function showPreMatch() {
 }
 
 function startMatch() {
-  hideAllScreens(); hud.style.display = 'flex'; crosshair.style.display = 'block';
+  hideAllScreens(); hud.style.display = 'flex';
   gamePhase = 'playing';
   const opp = run.opponents[run.currentRound];
   const stats = computePlayerStats(upgrades);
@@ -1219,20 +1073,30 @@ function getCanvasCoords(clientX, clientY) {
 canvas.addEventListener('mousemove', e => {
   const c = getCanvasCoords(e.clientX, e.clientY);
   mouseX = c.x; mouseY = c.y;
-  crosshair.style.left = e.clientX + 'px';
-  crosshair.style.top = e.clientY + 'px';
 });
-canvas.addEventListener('mousedown', e => { mouseClicked = true; e.preventDefault(); });
+canvas.addEventListener('mousedown', e => { mouseClicked = true; swingBuffer = SWING_BUFFER_MAX; e.preventDefault(); });
 canvas.addEventListener('touchmove', e => { e.preventDefault(); const c = getCanvasCoords(e.touches[0].clientX, e.touches[0].clientY); mouseX = c.x; mouseY = c.y; }, { passive: false });
-canvas.addEventListener('touchstart', e => { e.preventDefault(); mouseClicked = true; const c = getCanvasCoords(e.touches[0].clientX, e.touches[0].clientY); mouseX = c.x; mouseY = c.y; }, { passive: false });
+canvas.addEventListener('touchstart', e => { e.preventDefault(); mouseClicked = true; swingBuffer = SWING_BUFFER_MAX; const c = getCanvasCoords(e.touches[0].clientX, e.touches[0].clientY); mouseX = c.x; mouseY = c.y; }, { passive: false });
 
 window.addEventListener('keydown', e => {
+  if (e.code === 'ArrowUp' || e.code === 'KeyW') input.up = true;
+  if (e.code === 'ArrowDown' || e.code === 'KeyS') input.down = true;
+  if (e.code === 'ArrowLeft' || e.code === 'KeyA') input.left = true;
+  if (e.code === 'ArrowRight' || e.code === 'KeyD') input.right = true;
+  if (e.code === 'KeyF') swingBuffer = SWING_BUFFER_MAX;
+
   if (e.code === 'Space' && matchState && matchState.stats.hasSlowmo && gamePhase === 'playing') {
     if (matchState.slowmoCharge > 0.5) { matchState.slowmoActive = true; Sfx.slowmo(); }
     e.preventDefault();
   }
 });
-window.addEventListener('keyup', e => { if (e.code === 'Space' && matchState) matchState.slowmoActive = false; });
+window.addEventListener('keyup', e => {
+  if (e.code === 'ArrowUp' || e.code === 'KeyW') input.up = false;
+  if (e.code === 'ArrowDown' || e.code === 'KeyS') input.down = false;
+  if (e.code === 'ArrowLeft' || e.code === 'KeyA') input.left = false;
+  if (e.code === 'ArrowRight' || e.code === 'KeyD') input.right = false;
+  if (e.code === 'Space' && matchState) matchState.slowmoActive = false;
+});
 
 // ============================================================
 // BUTTON WIRING
@@ -1253,8 +1117,9 @@ function resize() {
   const dpr = Math.min(2, window.devicePixelRatio || 1);
   canvas.width = Math.floor(cw * dpr); canvas.height = Math.floor(ch * dpr);
   canvas.style.width = cw + 'px'; canvas.style.height = ch + 'px';
-  // Compute focal length from FOV
-  focal = (VH / 2) / Math.tan((CAM.fov * Math.PI / 180) / 2);
+  courtScale = Math.min((VW - COURT_PAD * 2) / CW, (VH - COURT_PAD * 2) / CL);
+  courtOffsetX = (VW - CW * courtScale) / 2;
+  courtOffsetY = (VH - CL * courtScale) / 2;
 }
 window.addEventListener('resize', resize, { passive: true }); resize();
 
