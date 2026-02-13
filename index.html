@@ -849,6 +849,20 @@ function drawGame(m) {
     ctx.globalAlpha = 1;
   }
 
+  // CRT tint + vignette to preserve retro vibe
+  const crtTint = ctx.createLinearGradient(0, 0, VW, VH);
+  crtTint.addColorStop(0, 'rgba(73,208,255,0.04)');
+  crtTint.addColorStop(0.5, 'rgba(255,138,61,0.02)');
+  crtTint.addColorStop(1, 'rgba(134,239,172,0.04)');
+  ctx.fillStyle = crtTint;
+  ctx.fillRect(0, 0, VW, VH);
+
+  const vig = ctx.createRadialGradient(VW / 2, VH / 2, VW * 0.2, VW / 2, VH / 2, VW * 0.75);
+  vig.addColorStop(0, 'rgba(0,0,0,0)');
+  vig.addColorStop(1, 'rgba(0,0,0,0.45)');
+  ctx.fillStyle = vig;
+  ctx.fillRect(0, 0, VW, VH);
+
   ctx.restore();
 }
 
