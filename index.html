@@ -263,7 +263,7 @@ function createPlayer(isAI, side) {
 }
 
 // --- Ball ---
-let ball = {x:0,y:0,vx:0,vy:0,active:false,gravity:0.25,lastHitBy:null,bounced:false,trail:[],inPlay:false,spin:0,onFire:false};
+let ball = {x:0,y:0,vx:0,vy:0,active:false,gravity:0.15,lastHitBy:null,bounced:false,trail:[],inPlay:false,spin:0,onFire:false};
 
 // --- Game state ---
 let state = STATE.TITLE;
@@ -338,14 +338,14 @@ function resetBall() {
 function doServe(who) {
   serveReady=false; ball.active=true; ball.inPlay=true; ball.bounced=false;
   // Scale serve speed: gentler in early matches, faster in later ones
-  const matchScale = 0.7 + currentOpponentIdx * 0.05;
+  const matchScale = 0.85 + currentOpponentIdx * 0.025;
   if(who==='left'){
     ball.x=player.x+20; ball.y=player.y-60;
-    ball.vx=(3.5+player.power*1.5)*matchScale; ball.vy=-4.5-player.power*0.8; ball.lastHitBy='left';
+    ball.vx=(4+player.power*1.5)*matchScale; ball.vy=-6-player.power; ball.lastHitBy='left';
     player.swingCooldown=20;
   } else {
     ball.x=opponent.x-20; ball.y=opponent.y-60;
-    ball.vx=-(3.5+opponent.power*1.5)*matchScale; ball.vy=-4.5-opponent.power*0.8; ball.lastHitBy='right';
+    ball.vx=-(4+opponent.power*1.5)*matchScale; ball.vy=-6-opponent.power; ball.lastHitBy='right';
     opponent.swingCooldown=20;
   }
 }
@@ -400,8 +400,8 @@ function tryHit(p, isLob) {
       } else {
         const spd=5+p.power*2.5;
         ball.vx=aimNxClamped*spd*powerMult; ball.vy=aimNy*spd*0.6*powerMult;
-        // Clamp vy so ball doesn't go straight into the ground
-        ball.vy=Math.max(-spd, Math.min(spd*0.4, ball.vy));
+        // Clamp vy: ensure enough upward arc to clear the net
+        ball.vy=Math.max(-spd, Math.min(-1, ball.vy));
       }
     } else {
       // AI: use fixed formulas
