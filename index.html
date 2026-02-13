@@ -194,7 +194,9 @@ function project(wx, wy, wz) {
   if (dz < 0.05) return null;
   const sx = VW / 2 + (dx / dz) * focal;
   const sy = VH / 2 - (dy / dz) * focal;
-  return { x: sx, y: sy, z: dz, scale: focal / dz };
+  // Cap scale so close objects don't explode in size
+  const rawScale = focal / dz;
+  return { x: sx, y: sy, z: dz, scale: Math.min(rawScale, 120) };
 }
 
 // ============================================================
@@ -785,7 +787,7 @@ function drawGame(m) {
       if (!p) continue;
       ctx.globalAlpha = tr.t * 0.25 * (m.ball.ghost || 1);
       ctx.fillStyle = '#ffe033';
-      const r = Math.max(1, 4 * p.scale * tr.t);
+      const r = clamp(4 * p.scale * tr.t, 1, 12);
       ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI * 2); ctx.fill();
     }
     ctx.globalAlpha = 1;
@@ -795,11 +797,11 @@ function drawGame(m) {
   if (m && (m.ball.active || m.serveReady)) {
     const bp = project(m.ball.x, m.ball.y, m.ball.z);
     if (bp) {
-      const br = Math.max(2, BALL_RADIUS * 12 * bp.scale);
+      const br = clamp(BALL_RADIUS * 12 * bp.scale, 2, 18);
       ctx.globalAlpha = m.ball.ghost;
       // Glow
       ctx.shadowColor = '#ffe033';
-      ctx.shadowBlur = 12;
+      ctx.shadowBlur = Math.min(12, br * 1.5);
       ctx.fillStyle = '#ffe033';
       ctx.beginPath(); ctx.arc(bp.x, bp.y, br, 0, Math.PI * 2); ctx.fill();
       ctx.shadowBlur = 0;
@@ -823,7 +825,7 @@ function drawGame(m) {
       if (!pp) continue;
       ctx.globalAlpha = clamp(p.life / 0.3, 0, 1);
       ctx.fillStyle = p.color;
-      const sz = Math.max(1, 3 * pp.scale);
+      const sz = clamp(3 * pp.scale, 1, 10);
       ctx.fillRect(pp.x - sz / 2, pp.y - sz / 2, sz, sz);
     }
     ctx.globalAlpha = 1;
@@ -1044,7 +1046,7 @@ function drawBallShadow(m) {
   if (!sp) return;
   ctx.globalAlpha = 0.3;
   ctx.fillStyle = '#000';
-  const sr = Math.max(2, 5 * sp.scale);
+  const sr = clamp(5 * sp.scale, 2, 20);
   ctx.beginPath(); ctx.ellipse(sp.x, sp.y, sr, sr * 0.4, 0, 0, Math.PI * 2); ctx.fill();
   ctx.globalAlpha = 1;
 }
@@ -1067,7 +1069,7 @@ function drawPlayerPaddle(m) {
   // Paddle face
   ctx.fillStyle = '#49d0ff';
   ctx.shadowColor = '#49d0ff';
-  ctx.shadowBlur = swing > 0.3 ? 15 : 6;
+  ctx.shadowBlur = swing > 0.3 ? 10 : 4;
   const pw = 28 * m.stats.reachMult;
   const ph = 35 * m.stats.reachMult;
   const px = baseX + 5 - pw / 2;
