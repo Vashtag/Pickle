@@ -65,17 +65,12 @@
   .player-buffs{display:flex;gap:0.3rem;justify-content:center;margin:0.5rem 0;flex-wrap:wrap}
   .buff{font-size:0.6rem;padding:0.15rem 0.4rem;border:1px solid rgba(73,208,255,0.3);border-radius:2px;color:var(--accent2);background:rgba(73,208,255,0.08)}
   /* Crosshair */
-  .crosshair{position:fixed;pointer-events:none;z-index:12;display:none}
-  .crosshair::before,.crosshair::after{content:'';position:absolute;background:rgba(255,255,255,0.5)}
-  .crosshair::before{width:20px;height:2px;left:-10px;top:-1px}
-  .crosshair::after{width:2px;height:20px;left:-1px;top:-10px}
 </style>
 </head>
 <body>
 <div id="wrap"><canvas id="game"></canvas></div>
 <div id="scanlines"></div>
 <div id="crt-glow"></div>
-<div class="crosshair" id="crosshair"></div>
 
 <!-- HUD -->
 <div class="hud" id="hud" style="display:none">
@@ -208,10 +203,8 @@ const screenChampion = document.getElementById('screenChampion');
 const matchResultEl = document.getElementById('matchResult');
 const hud = document.getElementById('hud');
 const slowmoBar = document.getElementById('slowmoBar');
-const crosshair = document.getElementById('crosshair');
 
 let run = null, matchState = null, upgrades = [];
-let mouseX = VW / 2, mouseY = VH / 2;
 let mouseClicked = false;
 const input = { up:false, down:false, left:false, right:false };
 let swingBuffer = 0;
@@ -914,6 +907,22 @@ function drawOpponent(m) {
   ctx.strokeStyle = '#eee';
   ctx.lineWidth = 4;
   ctx.beginPath();
+  ctx.moveTo(shoulder.x + 2, shoulder.y + 2);
+  ctx.lineTo(shoulder.x + 14 + swing * 7, shoulder.y - 6 - swing * 7);
+  ctx.stroke();
+
+  ctx.fillStyle = 'rgba(255,255,255,0.5)';
+  ctx.font = '9px monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText(m.opp.name.split(' ')[0], head.x, head.y - 12);
+}
+
+function drawBallShadow(m) {
+  const sp = worldToScreen(m.ball.x, m.ball.z, 0);
+  ctx.globalAlpha = 0.22;
+  ctx.fillStyle = '#000';
+  const sr = clamp(8 - m.ball.y * 0.8, 2, 9);
+  ctx.beginPath(); ctx.ellipse(sp.x, sp.y, sr, sr * 0.55, 0, 0, Math.PI * 2); ctx.fill();
   ctx.moveTo(p.x + 6, p.y - 2);
   ctx.lineTo(p.x + 15 + swing * 8, p.y - 14);
   ctx.stroke();
@@ -947,8 +956,8 @@ function drawPlayerPaddle(m) {
   ctx.strokeStyle = '#8B6914';
   ctx.lineWidth = 4;
   ctx.beginPath();
-  ctx.moveTo(p.x, p.y + r * 0.2);
-  ctx.lineTo(p.x, p.y + r + 11);
+  ctx.moveTo(bodyTop.x - 1, bodyTop.y + 1);
+  ctx.lineTo(bodyTop.x + 16 + swing * 8, bodyTop.y - 8 - swing * 8);
   ctx.stroke();
 }
 
@@ -981,7 +990,6 @@ function hideAllScreens() {
   screenUpgrade.style.display = 'none'; screenGameOver.style.display = 'none';
   screenChampion.style.display = 'none'; matchResultEl.style.display = 'none';
   hud.style.display = 'none'; slowmoBar.style.display = 'none';
-  crosshair.style.display = 'none';
 }
 
 function startNewRun() {
@@ -1065,18 +1073,9 @@ function showChampion() {
 // ============================================================
 // INPUT
 // ============================================================
-function getCanvasCoords(clientX, clientY) {
-  const rect = canvas.getBoundingClientRect();
-  return { x: ((clientX - rect.left) / rect.width) * VW, y: ((clientY - rect.top) / rect.height) * VH };
-}
-
-canvas.addEventListener('mousemove', e => {
-  const c = getCanvasCoords(e.clientX, e.clientY);
-  mouseX = c.x; mouseY = c.y;
-});
 canvas.addEventListener('mousedown', e => { mouseClicked = true; swingBuffer = SWING_BUFFER_MAX; e.preventDefault(); });
-canvas.addEventListener('touchmove', e => { e.preventDefault(); const c = getCanvasCoords(e.touches[0].clientX, e.touches[0].clientY); mouseX = c.x; mouseY = c.y; }, { passive: false });
-canvas.addEventListener('touchstart', e => { e.preventDefault(); mouseClicked = true; swingBuffer = SWING_BUFFER_MAX; const c = getCanvasCoords(e.touches[0].clientX, e.touches[0].clientY); mouseX = c.x; mouseY = c.y; }, { passive: false });
+canvas.addEventListener('touchmove', e => { e.preventDefault(); }, { passive: false });
+canvas.addEventListener('touchstart', e => { e.preventDefault(); mouseClicked = true; swingBuffer = SWING_BUFFER_MAX; }, { passive: false });
 
 window.addEventListener('keydown', e => {
   if (e.code === 'ArrowUp' || e.code === 'KeyW') input.up = true;
@@ -1117,9 +1116,10 @@ function resize() {
   const dpr = Math.min(2, window.devicePixelRatio || 1);
   canvas.width = Math.floor(cw * dpr); canvas.height = Math.floor(ch * dpr);
   canvas.style.width = cw + 'px'; canvas.style.height = ch + 'px';
-  courtScale = Math.min((VW - COURT_PAD * 2) / CW, (VH - COURT_PAD * 2) / CL);
-  courtOffsetX = (VW - CW * courtScale) / 2;
-  courtOffsetY = (VH - CL * courtScale) / 2;
+  courtScale = (VW - COURT_PAD * 2) / CL;
+  heightScale = courtScale * 0.95;
+  courtOffsetX = (VW - CL * courtScale) / 2;
+  sideBaseY = VH - COURT_PAD;
 }
 window.addEventListener('resize', resize, { passive: true }); resize();
 
