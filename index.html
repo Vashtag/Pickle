@@ -1,737 +1,1097 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
-<title>Dusk Drive — First-Person Disc Golf</title>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"/>
+<title>Pickle Brawl — Roguelike Pickleball Tournament</title>
 <style>
-  :root{
-    --bg1:#a54720; --bg2:#f38e41; --bg3:#ffe6ba; --water:#30160f;
-    --fg:#050607; --text:#e6edf3; --muted:#a9b1ba;
+  @font-face { font-family:'PB'; src:local('Courier New'),local('Courier'),local(monospace); }
+  :root {
+    --bg:#0a0a14; --court:#1a3a1a; --line:#e8e8d0; --net:#ccccaa;
+    --p1:#49d0ff; --p2:#ff6b4a; --ball:#ffe033;
     --accent:#ff8a3d; --accent2:#49d0ff; --accent3:#86efac;
-    --panel:rgba(5,6,7,.65); --panel-blur:8px;
+    --panel:rgba(10,10,20,0.92); --text:#e6edf3; --muted:#7a8a9a;
+    --crt-line:rgba(0,0,0,0.08);
   }
-  *{box-sizing:border-box}
-  html,body{margin:0;height:100%;background:linear-gradient(180deg,var(--bg3),var(--bg2) 55%,var(--bg1));color:var(--text);font-family:system-ui,-apple-system,Segoe UI,Roboto,Inter,Helvetica,Arial}
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%;background:var(--bg);color:var(--text);font-family:'PB',monospace;overflow:hidden;user-select:none;-webkit-user-select:none}
+  canvas{display:block;width:100vw;height:100vh;image-rendering:pixelated;image-rendering:crisp-edges}
   #wrap{position:fixed;inset:0;display:grid;place-items:center}
-  canvas{display:block;width:100vw;height:100vh;touch-action:none}
 
-  /* HUD */
-  .hud{position:fixed;inset:0;pointer-events:none}
-  .row{display:flex;gap:.5rem;align-items:center}
-  .topbar{position:absolute;left:0;right:0;top:0;display:flex;justify-content:space-between;align-items:center;padding:.6rem .8rem}
-  .chip{pointer-events:auto;background:var(--panel);backdrop-filter:blur(var(--panel-blur));border:1px solid rgba(255,255,255,.08);border-radius:999px;padding:.4rem .7rem;font-size:.9rem;display:flex;gap:.6rem;align-items:center}
-  .chip .label{opacity:.8}
-  .chip strong{font-weight:700}
-  .wind{gap:.4rem}
-  .wind .arrow{width:14px;height:14px;transform-origin:center;display:inline-block}
-  .wind .arrow::before{content:"";display:block;width:0;height:0;border-left:7px solid transparent;border-right:7px solid transparent;border-bottom:12px solid var(--accent2);transform:translateY(-2px)}
-
-  .bottombar{position:absolute;left:0;right:0;bottom:0;display:flex;justify-content:center;padding:.7rem}
-  .panel{pointer-events:auto;background:var(--panel);backdrop-filter:blur(var(--panel-blur));border:1px solid rgba(255,255,255,.08);border-radius:14px;padding:.55rem .7rem}
-  .controls{display:flex;gap:.5rem;align-items:center;flex-wrap:wrap;justify-content:center;max-width:min(1100px,96vw)}
-  button.btn{appearance:none;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.06);color:var(--text);padding:.55rem .7rem;border-radius:10px;font-weight:600;letter-spacing:.3px;cursor:pointer}
-  button.btn:active{transform:translateY(1px)}
-  button.btn[aria-pressed="true"], .seg button[aria-pressed="true"]{outline:2px solid var(--accent);background:rgba(255,138,61,.18)}
-  .seg{display:flex;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);border-radius:12px;overflow:hidden}
-  .seg button{border:0;border-right:1px solid rgba(255,255,255,.06);background:transparent;padding:.5rem .7rem;color:var(--text);font-weight:600}
-  .seg button:last-child{border-right:0}
-
-  .powermeter{position:absolute;left:50%;bottom:78px;transform:translateX(-50%);width:min(620px,92vw);height:12px;border-radius:999px;background:rgba(255,255,255,.07);overflow:hidden;border:1px solid rgba(255,255,255,.08);display:none}
-  .powermeter .fill{height:100%;width:0%;background:linear-gradient(90deg,var(--accent3),var(--accent));box-shadow:0 0 12px rgba(255,138,61,.25) inset}
-  .powermeter[data-on="1"]{display:block}
+  /* Scanline overlay */
+  #scanlines{position:fixed;inset:0;pointer-events:none;z-index:10;
+    background:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,0.06) 2px,rgba(0,0,0,0.06) 4px);
+  }
+  #crt-glow{position:fixed;inset:0;pointer-events:none;z-index:9;
+    box-shadow:inset 0 0 80px rgba(0,0,0,0.5),inset 0 0 160px rgba(0,0,0,0.3);
+    border-radius:8px;
+  }
 
   /* Screens */
-  .screen{position:fixed;inset:0;background:linear-gradient(180deg,rgba(10,10,10,.72),rgba(10,10,10,.6));display:grid;place-items:center;z-index:3}
-  .card{background:var(--panel);backdrop-filter:blur(10px);border:1px solid rgba(255,255,255,.08);border-radius:16px;padding:1rem 1.2rem;max-width:720px;width:min(720px,92vw);text-align:center}
-  h1,h2{margin:.2rem 0 .6rem 0}
-  h1{font-size:1.6rem}
-  .sub{opacity:.85;margin:.3rem 0 1rem 0}
-  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:.6rem;margin-top:.4rem}
-  .tag{display:inline-flex;gap:.45rem;align-items:center;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.12);padding:.3rem .55rem;border-radius:999px;font-size:.85rem}
-  .small{font-size:.9rem;color:var(--muted)}
-  #landscapeHint{position:fixed;inset:auto 0 0 0;display:none;justify-content:center;z-index:2}
-  #landscapeHint .card{margin:0 auto 12px auto}
-  @media (orientation:portrait){ #landscapeHint{display:flex} }
+  .screen{position:fixed;inset:0;display:grid;place-items:center;z-index:20;background:rgba(0,0,0,0.85)}
+  .card{background:var(--panel);border:2px solid rgba(255,255,255,0.1);border-radius:4px;padding:1.5rem;max-width:600px;width:min(600px,92vw);text-align:center}
+  .card h1{font-size:1.8rem;margin-bottom:0.5rem;color:var(--accent);text-transform:uppercase;letter-spacing:3px;text-shadow:0 0 20px rgba(255,138,61,0.5)}
+  .card h2{font-size:1.3rem;margin-bottom:0.5rem;color:var(--accent2);text-transform:uppercase;letter-spacing:2px}
+  .card p{margin:0.4rem 0;font-size:0.85rem;color:var(--muted);line-height:1.5}
+  .card .highlight{color:var(--ball);font-weight:bold}
+  .btn{appearance:none;border:2px solid var(--accent);background:rgba(255,138,61,0.15);color:var(--accent);padding:0.6rem 1.4rem;font-family:inherit;font-size:1rem;font-weight:bold;text-transform:uppercase;letter-spacing:2px;cursor:pointer;border-radius:2px;transition:all 0.15s}
+  .btn:hover{background:rgba(255,138,61,0.3);box-shadow:0 0 15px rgba(255,138,61,0.3)}
+  .btn:active{transform:scale(0.97)}
+  .btn-small{padding:0.4rem 0.8rem;font-size:0.8rem}
 
-  .reticle{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:24px;height:24px;border-radius:999px;border:2px solid rgba(255,255,255,.25);box-shadow:0 0 0 2px rgba(0,0,0,.2) inset;pointer-events:none}
-  .reticle::after{content:"";position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:3px;height:3px;border-radius:50%;background:rgba(255,255,255,.85)}
+  /* Upgrade cards */
+  .upgrades{display:grid;grid-template-columns:repeat(3,1fr);gap:0.6rem;margin:1rem 0}
+  .upgrade-card{border:2px solid rgba(255,255,255,0.1);border-radius:4px;padding:0.8rem 0.5rem;cursor:pointer;transition:all 0.15s;background:rgba(255,255,255,0.03)}
+  .upgrade-card:hover{border-color:var(--accent);background:rgba(255,138,61,0.1);box-shadow:0 0 12px rgba(255,138,61,0.2)}
+  .upgrade-card .icon{font-size:1.8rem;margin-bottom:0.3rem}
+  .upgrade-card .name{font-size:0.8rem;font-weight:bold;color:var(--text);margin-bottom:0.2rem}
+  .upgrade-card .desc{font-size:0.65rem;color:var(--muted)}
 
-  /* tiny error toast */
-  #err{position:fixed;right:8px;bottom:8px;max-width:60ch;z-index:9999;background:#1f2937;color:#fff;padding:.6rem .8rem;border-radius:10px;border:1px solid #fff3}
-  #err code{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:.85em}
+  /* Bracket display */
+  .bracket{display:flex;gap:0.3rem;margin:0.8rem 0;justify-content:center;flex-wrap:wrap}
+  .bracket-slot{width:28px;height:28px;border:2px solid rgba(255,255,255,0.15);border-radius:2px;display:grid;place-items:center;font-size:0.6rem;font-weight:bold}
+  .bracket-slot.won{border-color:var(--accent3);color:var(--accent3);background:rgba(134,239,172,0.1)}
+  .bracket-slot.current{border-color:var(--accent);color:var(--accent);background:rgba(255,138,61,0.15);animation:pulse 1s infinite}
+  .bracket-slot.lost{border-color:#ff4444;color:#ff4444;background:rgba(255,68,68,0.1)}
+  .bracket-slot.future{opacity:0.3}
+  @keyframes pulse{0%,100%{box-shadow:0 0 4px rgba(255,138,61,0.3)}50%{box-shadow:0 0 12px rgba(255,138,61,0.6)}}
+
+  /* HUD */
+  .hud{position:fixed;top:0;left:0;right:0;pointer-events:none;z-index:15;padding:0.5rem 0.8rem;display:flex;justify-content:space-between;align-items:flex-start}
+  .hud-left,.hud-right,.hud-center{display:flex;gap:0.4rem;align-items:center}
+  .hud-center{position:absolute;left:50%;transform:translateX(-50%);top:0.5rem}
+  .chip{background:rgba(10,10,20,0.8);border:1px solid rgba(255,255,255,0.1);border-radius:2px;padding:0.25rem 0.5rem;font-size:0.75rem}
+  .chip .label{color:var(--muted);margin-right:0.3rem}
+  .chip strong{color:var(--text)}
+  .score-big{font-size:1.6rem;font-weight:bold;min-width:3ch;text-align:center}
+  .score-p1{color:var(--p1)}
+  .score-p2{color:var(--p2)}
+
+  /* Slow-mo indicator */
+  .slowmo-bar{position:fixed;bottom:0.6rem;left:50%;transform:translateX(-50%);width:min(200px,40vw);height:8px;border:1px solid rgba(255,255,255,0.15);border-radius:2px;z-index:15;background:rgba(0,0,0,0.5);overflow:hidden;display:none}
+  .slowmo-fill{height:100%;background:linear-gradient(90deg,var(--accent2),var(--accent3));transition:width 0.1s}
+
+  /* Match result overlay */
+  .match-result{position:fixed;inset:0;display:grid;place-items:center;z-index:25;background:rgba(0,0,0,0.8);display:none}
+  .result-text{font-size:2.5rem;font-weight:bold;text-transform:uppercase;letter-spacing:4px;text-shadow:0 0 30px currentColor;animation:resultIn 0.5s ease-out}
+  @keyframes resultIn{from{transform:scale(2);opacity:0}to{transform:scale(1);opacity:1}}
+  .win-text{color:var(--accent3)}
+  .lose-text{color:#ff4444}
+
+  /* Opponent intro */
+  .opponent-intro{margin:0.8rem 0}
+  .opponent-name{font-size:1.2rem;font-weight:bold;color:var(--p2);text-transform:uppercase;letter-spacing:2px}
+  .opponent-title{font-size:0.7rem;color:var(--muted);font-style:italic}
+  .opponent-stats{display:flex;gap:0.5rem;justify-content:center;margin-top:0.4rem;flex-wrap:wrap}
+  .stat{font-size:0.65rem;color:var(--muted)}
+  .stat-bar{display:inline-block;width:40px;height:4px;background:rgba(255,255,255,0.1);border-radius:2px;vertical-align:middle;margin-left:0.2rem;overflow:hidden}
+  .stat-fill{height:100%;background:var(--p2);border-radius:2px}
+
+  /* Player upgrades display */
+  .player-buffs{display:flex;gap:0.3rem;justify-content:center;margin:0.5rem 0;flex-wrap:wrap}
+  .buff{font-size:0.6rem;padding:0.15rem 0.4rem;border:1px solid rgba(73,208,255,0.3);border-radius:2px;color:var(--accent2);background:rgba(73,208,255,0.08)}
 </style>
 </head>
 <body>
-  <div id="wrap"><canvas id="game" aria-label="Dusk Drive FP game canvas"></canvas></div>
-  <div class="reticle" id="reticle" hidden></div>
+<div id="wrap"><canvas id="game"></canvas></div>
+<div id="scanlines"></div>
+<div id="crt-glow"></div>
 
-  <!-- HUD -->
-  <div class="hud" aria-live="polite">
-    <div class="topbar">
-      <div class="row">
-        <div class="chip"><span class="label">Hole</span> <strong id="holeNum">1</strong>/<span id="holesTotal">3</span></div>
-        <div class="chip"><span class="label">Par</span> <strong id="parLabel">3</strong></div>
-        <div class="chip"><span class="label">Strokes</span> <strong id="strokes">0</strong></div>
-      </div>
-      <div class="row">
-        <div class="chip wind"><span class="label">Wind</span> <span id="windVal">0</span><span class="arrow" id="windArrow"></span></div>
-        <button class="btn" id="btnSettings" title="Settings" aria-label="Settings">⚙️</button>
-      </div>
-    </div>
-
-    <div class="bottombar">
-      <div class="panel controls">
-        <div class="seg" id="clubSeg" role="group" aria-label="Disc select"></div>
-        <div class="seg" id="spinSeg" role="group" aria-label="Release angle">
-          <button class="btn" data-spin="-1" aria-pressed="false" title="Hyzer (−15°)">Hyzer</button>
-          <button class="btn" data-spin="0"  aria-pressed="true"  title="Flat (0°)">Flat</button>
-          <button class="btn" data-spin="1"  aria-pressed="false" title="Anhyzer (+15°)">Anhy</button>
-        </div>
-        <div class="seg" id="handSeg" role="group" aria-label="Throw style">
-          <button class="btn" data-hand="RHBH" aria-pressed="true"  title="Right-hand backhand">RHBH</button>
-          <button class="btn" data-hand="LHBH" aria-pressed="false" title="Left-hand backhand">LHBH</button>
-        </div>
-        <button class="btn" id="btnNewRound" title="Restart round">↻ Round</button>
-      </div>
-    </div>
-
-    <div class="powermeter" id="powermeter" aria-hidden="true"><div class="fill" id="powerfill"></div></div>
+<!-- HUD -->
+<div class="hud" id="hud" style="display:none">
+  <div class="hud-left">
+    <div class="chip"><span class="label">Round</span><strong id="hudRound">1</strong>/8</div>
+    <div class="chip"><span class="label">Match</span><strong id="hudMatch">QF1</strong></div>
   </div>
-
-  <!-- Screens -->
-  <div id="screenIntro" class="screen" role="dialog" aria-modal="true">
-    <div class="card">
-      <h1>🥏 Dusk Drive — First-Person Disc Golf</h1>
-      <div class="sub">Aim with mouse/touch (left-right = yaw, up-down = pitch). Hold to charge, release to throw. Minimal silhouette world.</div>
-      <div class="grid">
-        <div class="tag">Drivers • Mids • Putters</div>
-        <div class="tag">Lift • Drag • Turn/Fade</div>
-        <div class="tag">Vertical Wind & Geyser</div>
-        <div class="tag">Silhouette Landmarks</div>
-      </div>
-      <p class="small" style="margin-top:.7rem">Tips: keep aim slightly above horizon for distance • Spacebar toggles charge/throw</p>
-      <div style="margin-top:.7rem"><button class="btn" id="btnPlay">Start Round</button></div>
-    </div>
+  <div class="hud-center">
+    <span class="score-big score-p1" id="scoreP1">0</span>
+    <span class="chip" style="color:var(--muted)">-</span>
+    <span class="score-big score-p2" id="scoreP2">0</span>
   </div>
-
-  <div id="screenSummary" class="screen" style="display:none" role="dialog" aria-modal="true">
-    <div class="card">
-      <h2>Round Complete</h2>
-      <p class="sub">Total strokes: <strong id="sumStrokes">0</strong> • Par: <strong id="sumPar">0</strong> • Score: <strong id="sumScore">E</strong></p>
-      <div class="grid" id="holeBreakdown"></div>
-      <div style="margin-top:.7rem"><button class="btn" id="btnPlayAgain">Play Again</button></div>
-    </div>
+  <div class="hud-right">
+    <div class="chip"><span class="label">Serving</span><strong id="hudServe">YOU</strong></div>
   </div>
+</div>
 
-  <div id="screenSettings" class="screen" style="display:none" role="dialog" aria-modal="true">
-    <div class="card">
-      <h2>Settings</h2>
-      <div class="grid">
-        <label class="chip" style="justify-content:space-between">
-          <span>Reduced motion</span>
-          <input type="checkbox" id="chkReduced" />
-        </label>
-        <label class="chip" style="justify-content:space-between">
-          <span>Audio (ambience & SFX)</span>
-          <input type="checkbox" id="chkAudio" />
-        </label>
-        <label class="chip" style="justify-content:space-between">
-          <span>Wind (toggle)</span>
-          <input type="checkbox" id="chkWind" checked />
-        </label>
-        <label class="chip" style="justify-content:space-between">
-          <span>Camera: true first-person</span>
-          <input type="checkbox" id="chkFirstPerson" />
-        </label>
-      </div>
-      <p class="small" style="margin-top:.7rem">Accents: <span style="color:var(--accent)">primary</span> • <span style="color:var(--accent2)">secondary</span> • <span style="color:var(--accent3)">tertiary</span></p>
-      <div style="margin-top:.7rem"><button class="btn" id="btnCloseSettings">Close</button></div>
-    </div>
+<div class="slowmo-bar" id="slowmoBar"><div class="slowmo-fill" id="slowmoFill" style="width:100%"></div></div>
+
+<!-- Title Screen -->
+<div id="screenTitle" class="screen">
+  <div class="card">
+    <h1>Pickle Brawl</h1>
+    <p style="color:var(--accent);font-size:0.9rem;margin-bottom:0.6rem">ROGUELIKE PICKLEBALL TOURNAMENT</p>
+    <p>Fight through a bracket of 7 increasingly ruthless opponents.<br/>
+    Between matches, choose powerful upgrades.<br/>
+    <span class="highlight">Lose once and it's all over.</span></p>
+    <p style="margin-top:0.6rem;font-size:0.75rem">
+      <strong>Controls:</strong> Mouse/Touch = move paddle &bull; Auto-swing on contact<br/>
+      Spacebar = activate Slow-Mo (when available)
+    </p>
+    <div style="margin-top:1rem"><button class="btn" id="btnStart">Enter Tournament</button></div>
   </div>
+</div>
 
-  <div id="landscapeHint"><div class="card small">For best experience, rotate to landscape.</div></div>
+<!-- Pre-Match Screen -->
+<div id="screenPreMatch" class="screen" style="display:none">
+  <div class="card">
+    <h2>Next Opponent</h2>
+    <div class="opponent-intro">
+      <div class="opponent-name" id="oppName">???</div>
+      <div class="opponent-title" id="oppTitle"></div>
+      <div class="opponent-stats" id="oppStats"></div>
+    </div>
+    <div class="bracket" id="bracketDisplay"></div>
+    <div class="player-buffs" id="playerBuffs"></div>
+    <p style="font-size:0.7rem;color:var(--muted);margin:0.5rem 0">First to <strong id="targetScore">5</strong> points wins the match</p>
+    <div style="margin-top:0.8rem"><button class="btn" id="btnFight">Fight!</button></div>
+  </div>
+</div>
 
-  <div id="err" hidden></div>
+<!-- Upgrade Screen -->
+<div id="screenUpgrade" class="screen" style="display:none">
+  <div class="card">
+    <h2>Victory! Choose an Upgrade</h2>
+    <p style="font-size:0.75rem;color:var(--muted)">Pick one upgrade to carry into the next match</p>
+    <div class="upgrades" id="upgradeGrid"></div>
+  </div>
+</div>
+
+<!-- Game Over Screen -->
+<div id="screenGameOver" class="screen" style="display:none">
+  <div class="card">
+    <h2 style="color:#ff4444">Tournament Over</h2>
+    <p>You were eliminated in <strong id="goRound">Round 1</strong></p>
+    <p>Opponents defeated: <strong id="goWins">0</strong></p>
+    <p id="goMessage" style="color:var(--muted);margin-top:0.5rem"></p>
+    <div style="margin-top:1rem"><button class="btn" id="btnRetry">Try Again</button></div>
+  </div>
+</div>
+
+<!-- Champion Screen -->
+<div id="screenChampion" class="screen" style="display:none">
+  <div class="card">
+    <h1 style="color:var(--accent3)">Champion!</h1>
+    <p style="color:var(--accent3);font-size:1rem">You conquered the tournament!</p>
+    <p style="margin-top:0.5rem">Upgrades collected: <strong id="champUpgrades">0</strong></p>
+    <div class="player-buffs" id="champBuffs" style="margin:0.5rem 0"></div>
+    <div style="margin-top:1rem"><button class="btn" id="btnNewRun">New Run</button></div>
+  </div>
+</div>
+
+<!-- Match result flash -->
+<div class="match-result" id="matchResult">
+  <div class="result-text" id="resultText"></div>
+</div>
 
 <script>
-(function initWhenReady(){
-  if(document.readyState === 'loading'){
-    document.addEventListener('DOMContentLoaded', main, { once:true });
-  } else { main(); }
+(function(){
+'use strict';
 
-  function showErr(msg){
-    const el = document.getElementById('err');
-    el.hidden = false;
-    el.innerHTML = 'Error: <code>'+String(msg)+'</code>';
-    console.error(msg);
+// ============================================================
+// CONSTANTS
+// ============================================================
+const COURT_W = 640, COURT_H = 360;
+const NET_X = COURT_W / 2;
+const PADDLE_W = 8, PADDLE_H_BASE = 48;
+const BALL_R = 5;
+const BALL_SPEED_BASE = 280;
+const SERVE_SPEED = 220;
+const AI_SPEED_BASE = 160;
+const KITCHEN_W = 80; // no-volley zone width from net
+const WIN_SCORE_BASE = 5;
+const GRAVITY = 320;
+
+// Court boundaries (play area within canvas)
+const MARGIN_TOP = 40, MARGIN_BOT = 20, MARGIN_SIDE = 30;
+const PLAY_L = MARGIN_SIDE, PLAY_R = COURT_W - MARGIN_SIDE;
+const PLAY_T = MARGIN_TOP, PLAY_B = COURT_H - MARGIN_BOT;
+
+// ============================================================
+// GAME STATE
+// ============================================================
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+
+let DPR = Math.min(2, window.devicePixelRatio || 1);
+let cW, cH, scaleX, scaleY;
+
+// Screens
+const screenTitle = document.getElementById('screenTitle');
+const screenPreMatch = document.getElementById('screenPreMatch');
+const screenUpgrade = document.getElementById('screenUpgrade');
+const screenGameOver = document.getElementById('screenGameOver');
+const screenChampion = document.getElementById('screenChampion');
+const matchResult = document.getElementById('matchResult');
+const hud = document.getElementById('hud');
+const slowmoBar = document.getElementById('slowmoBar');
+
+// Tournament state
+let run = null; // current run data
+let matchState = null; // current match
+
+// Player upgrades (accumulated across run)
+let upgrades = [];
+
+// Input
+let mouseY = COURT_H / 2;
+let mouseActive = false;
+let slowmoKey = false;
+
+// Timing
+let lastTime = 0, clock = 0;
+let gamePhase = 'title'; // title, prematch, playing, point-scored, match-over, upgrading, gameover, champion
+
+// ============================================================
+// OPPONENT GENERATION
+// ============================================================
+const FIRST_NAMES = ['Crusher','Blitz','Shadow','Viper','Thunder','Spike','Ghost','Havoc','Fury','Ace','Phantom','Storm','Razor','Tank','Nova','Bolt','Fang','Hex','Jinx','Onyx'];
+const LAST_NAMES = ['McSmash','Dinkerson','Paddleton','Volleysworth','Spinetti','Dropper','Slicer','Netburn','Courtside','Baseline'];
+const TITLES = [
+  'The Kitchen Dweller','Dink Master','Power Server','Spin Doctor','Net Ninja',
+  'The Lob King','Baseline Brawler','Drop Shot Artist','The Wall','Rally Machine',
+  'Speed Demon','Angle Grinder','The Finisher','Court Ghost','Paddle Fury'
+];
+
+function seededRand(seed) {
+  let s = seed | 0;
+  return () => { s |= 0; s = s + 0x6D2B79F5 | 0; let t = Math.imul(s ^ s >>> 15, 1 | s); t ^= t + Math.imul(t ^ t >>> 7, 61 | t); return ((t ^ t >>> 14) >>> 0) / 4294967296; };
+}
+
+function genOpponent(round, seed) {
+  const r = seededRand(seed);
+  const diff = 0.25 + (round / 7) * 0.7; // 0.25 to ~0.95
+  const first = FIRST_NAMES[Math.floor(r() * FIRST_NAMES.length)];
+  const last = LAST_NAMES[Math.floor(r() * LAST_NAMES.length)];
+  const title = TITLES[Math.floor(r() * TITLES.length)];
+
+  return {
+    name: first + ' ' + last,
+    title: title,
+    speed: AI_SPEED_BASE * (0.6 + diff * 0.7),
+    reaction: 0.25 - diff * 0.18, // lower = faster reaction
+    accuracy: 0.5 + diff * 0.45,
+    aggression: 0.3 + r() * 0.5,
+    spinSkill: diff * 0.8,
+    paddleH: PADDLE_H_BASE * (0.9 + r() * 0.2),
+    color: `hsl(${Math.floor(r()*360)}, 70%, 60%)`,
+    seed: seed
+  };
+}
+
+// ============================================================
+// UPGRADE POOL
+// ============================================================
+const ALL_UPGRADES = [
+  { id:'bigger_paddle', icon:'🏓', name:'Mega Paddle', desc:'+30% paddle size', effect:s=>{s.paddleMult*=1.3} },
+  { id:'power_shots', icon:'💥', name:'Power Shots', desc:'+20% ball speed on hit', effect:s=>{s.powerMult*=1.2} },
+  { id:'slowmo', icon:'⏳', name:'Slow-Mo', desc:'Spacebar slows time (3s charge)', effect:s=>{s.hasSlowmo=true;s.slowmoMax+=3} },
+  { id:'speed_up', icon:'⚡', name:'Quick Feet', desc:'+25% paddle speed', effect:s=>{s.speedMult*=1.25} },
+  { id:'spin_master', icon:'🌀', name:'Spin Master', desc:'Add curve to your shots', effect:s=>{s.spinPower+=0.4} },
+  { id:'magnet', icon:'🧲', name:'Ball Magnet', desc:'Ball curves toward paddle', effect:s=>{s.magnetStr+=25} },
+  { id:'intimidate', icon:'👁', name:'Intimidate', desc:'Opponent 15% slower', effect:s=>{s.oppDebuff*=0.85} },
+  { id:'second_wind', icon:'💨', name:'Second Wind', desc:'+2 points needed to lose', effect:s=>{s.bonusHP+=2} },
+  { id:'precise', icon:'🎯', name:'Precision', desc:'Tighter angle control', effect:s=>{s.precisionMult*=0.7} },
+  { id:'wall', icon:'🧱', name:'The Wall', desc:'Paddle blocks wider area', effect:s=>{s.paddleMult*=1.15;s.speedMult*=1.1} },
+  { id:'fire_serve', icon:'🔥', name:'Fire Serve', desc:'Serves are 40% faster', effect:s=>{s.serveMult*=1.4} },
+  { id:'ghost_ball', icon:'👻', name:'Ghost Ball', desc:'Ball flickers (harder to read)', effect:s=>{s.ghostBall=true} },
+];
+
+function pickUpgradeChoices(existing) {
+  const pool = ALL_UPGRADES.filter(u => {
+    const count = existing.filter(e => e.id === u.id).length;
+    if (u.id === 'slowmo' && count >= 1) return false; // unique
+    if (u.id === 'ghost_ball' && count >= 1) return false;
+    if (u.id === 'second_wind' && count >= 2) return false;
+    if (count >= 3) return false;
+    return true;
+  });
+  // Shuffle and pick 3
+  for (let i = pool.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [pool[i], pool[j]] = [pool[j], pool[i]]; }
+  return pool.slice(0, 3);
+}
+
+// ============================================================
+// PLAYER STATS (computed from upgrades)
+// ============================================================
+function computePlayerStats(upgradeList) {
+  const s = {
+    paddleMult: 1, powerMult: 1, speedMult: 1, spinPower: 0,
+    magnetStr: 0, oppDebuff: 1, bonusHP: 0, precisionMult: 1,
+    serveMult: 1, hasSlowmo: false, slowmoMax: 0, ghostBall: false
+  };
+  for (const u of upgradeList) {
+    const def = ALL_UPGRADES.find(a => a.id === u.id);
+    if (def) def.effect(s);
   }
-  window.addEventListener('error', (e)=> showErr(e.message||e.error||'Unknown error'));
+  return s;
+}
 
-  function main(){
-    // ====== SAFE QUERY OF ELEMENTS
-    const q = (id)=>{ const el=document.getElementById(id); if(!el) throw new Error('Missing element #'+id); return el; };
+// ============================================================
+// AUDIO
+// ============================================================
+const Audio = (() => {
+  let actx = null, master = null;
+  function ensure() {
+    if (actx) return;
+    actx = new (window.AudioContext || window.webkitAudioContext)();
+    master = actx.createGain(); master.gain.value = 0.15; master.connect(actx.destination);
+  }
+  function play(freq, dur, type='square', vol=0.5) {
+    if (!actx) return;
+    const o = actx.createOscillator(); o.type = type;
+    const g = actx.createGain();
+    o.frequency.setValueAtTime(freq, actx.currentTime);
+    g.gain.setValueAtTime(vol, actx.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.001, actx.currentTime + dur);
+    o.connect(g); g.connect(master); o.start(); o.stop(actx.currentTime + dur + 0.02);
+  }
+  return {
+    unlock() { ensure(); },
+    hit() { play(440, 0.08, 'square', 0.4); },
+    wall() { play(220, 0.06, 'triangle', 0.3); },
+    score() { play(880, 0.15, 'square', 0.5); setTimeout(() => play(1100, 0.2, 'square', 0.4), 100); },
+    lose() { play(200, 0.3, 'sawtooth', 0.4); setTimeout(() => play(150, 0.4, 'sawtooth', 0.3), 150); },
+    win() { play(660, 0.1, 'square', 0.4); setTimeout(() => play(880, 0.1, 'square', 0.4), 100); setTimeout(() => play(1100, 0.15, 'square', 0.5), 200); },
+    serve() { play(330, 0.1, 'triangle', 0.3); },
+    upgrade() { play(523, 0.1, 'square', 0.3); setTimeout(() => play(659, 0.1, 'square', 0.3), 80); setTimeout(() => play(784, 0.15, 'square', 0.4), 160); },
+    slowmo() { play(180, 0.5, 'sine', 0.2); }
+  };
+})();
 
-    const canvas = q('game');
-    const ctx = canvas.getContext('2d');
-    if(!ctx){ showErr('2D canvas not available'); return; }
+// ============================================================
+// MATCH LOGIC
+// ============================================================
+function createMatch(opponent, stats, roundIdx) {
+  const winScore = WIN_SCORE_BASE + Math.floor(roundIdx / 3);
+  const loseScore = winScore + stats.bonusHP;
 
-    // -------- Elements
-    const elHole = q('holeNum'), elHolesTotal = q('holesTotal'), elPar=q('parLabel'), elStrokes=q('strokes');
-    const elWindVal=q('windVal'), elWindArrow=q('windArrow');
-    const elPowermeter=q('powermeter'), elPowerfill=q('powerfill');
-    const clubSeg=q('clubSeg'), spinSeg=q('spinSeg'), handSeg=q('handSeg');
-    const reticle=q('reticle');
+  return {
+    opp: opponent,
+    stats: stats,
+    winScore: winScore,
+    loseScore: loseScore,
+    p1Score: 0,
+    p2Score: 0,
+    serving: 'p1', // p1 = player
 
-    const screenIntro=q('screenIntro'), screenSummary=q('screenSummary'), screenSettings=q('screenSettings');
-    const btnPlay=q('btnPlay'), btnPlayAgain=q('btnPlayAgain'), btnNewRound=q('btnNewRound');
-    const btnSettings=q('btnSettings'), btnCloseSettings=q('btnCloseSettings');
-    const chkReduced=q('chkReduced'), chkAudio=q('chkAudio'), chkWind=q('chkWind'), chkFirstPerson=q('chkFirstPerson');
+    // Paddles
+    p1: { x: PLAY_L + 20, y: COURT_H / 2, w: PADDLE_W, h: PADDLE_H_BASE * stats.paddleMult, speed: 300 * stats.speedMult },
+    p2: { x: PLAY_R - 20, y: COURT_H / 2, w: PADDLE_W, h: opponent.paddleH, speed: opponent.speed * stats.oppDebuff, targetY: COURT_H / 2, reactionTimer: 0, lastBallY: COURT_H / 2 },
 
-    const sumStrokes=q('sumStrokes'), sumPar=q('sumPar'), sumScore=q('sumScore'), holeBreakdown=q('holeBreakdown');
+    // Ball
+    ball: { x: 0, y: 0, vx: 0, vy: 0, speed: 0, spin: 0, active: false, trail: [], ghost: 0 },
 
-    // ===== START-GAME FALLBACKS
-    let started=false;
-    function startGame(){
-      if(started) return;
-      started=true;
-      try { Sfx.unlock(); } catch{}
-      screenIntro.style.display='none';
-      newRound();
-    }
-    btnPlay.addEventListener('click', startGame);
-    // FIX: also allow touchstart on button (prevents delayed click on iOS)
-    btnPlay.addEventListener('touchstart', (e)=>{ e.preventDefault(); startGame(); }, { passive:false });
-    // FIX: tap/click the dim backdrop to start
-    screenIntro.addEventListener('click', (e)=>{ if (e.target === screenIntro) startGame(); });
+    // Serve state
+    serveTimer: 0,
+    serveReady: false,
 
-    window.addEventListener('keydown', (e)=>{ if((e.key==='Enter' || e.code==='Enter') && !started) startGame(); });
-    window.addEventListener('pointerdown', ()=>{ if(!started) startGame(); }, { once:true });
+    // Slow-mo
+    slowmoCharge: stats.hasSlowmo ? stats.slowmoMax : 0,
+    slowmoActive: false,
+    slowmoMax: stats.slowmoMax,
 
-    // ===== Config
-    const DPR_MAX = 2; let DPR = Math.max(1, Math.min(DPR_MAX, window.devicePixelRatio||1));
-    const HOLES_PER_ROUND = 3; elHolesTotal.textContent = HOLES_PER_ROUND;
+    // Particles
+    particles: [],
 
-    const DISCS=[
-      {id:'DRV',name:'Driver', speed:1.00,glide:1.05,turn:-2.2,fade:2.1},
-      {id:'MID',name:'Mid',    speed:0.85,glide:1.10,turn:-1.2,fade:1.5},
-      {id:'PUT',name:'Putter', speed:0.70,glide:1.00,turn:-0.3,fade:0.9}
-    ];
-    let currentDisc = DISCS[0];
+    // Point flash
+    pointFlash: 0,
+    pointText: '',
 
-    // Physics tuned for canvas units (roughly meters, but stylized)
-    const G=28;
-    const DRAG_K=0.015;
-    const LIFT_K=0.050;
-    const VREF=45;
-    const SPIN_DECAY=0.35;
+    // Rally count
+    rallyCount: 0,
 
-    let windOn=true, windLift=0;  // -1..+1 (down/up)
-    let releaseMode=0, hand='RHBH';
+    // AI state
+    aiState: { anticipateY: COURT_H / 2, moving: false }
+  };
+}
 
-    let canvasW=0, canvasH=0, CX=0, CY=0; const FOV_DEG=72; let focal=600; let firstPersonHard=false;
+function resetBall(m) {
+  const isP1 = m.serving === 'p1';
+  m.ball.x = isP1 ? m.p1.x + PADDLE_W + BALL_R + 2 : m.p2.x - PADDLE_W - BALL_R - 2;
+  m.ball.y = isP1 ? m.p1.y : m.p2.y;
+  m.ball.vx = 0; m.ball.vy = 0; m.ball.speed = 0; m.ball.spin = 0;
+  m.ball.active = false; m.ball.trail = []; m.ball.ghost = 0;
+  m.serveTimer = 0.8;
+  m.serveReady = false;
+  m.rallyCount = 0;
+}
 
-    let holeIndex=0, roundData=null, hole=null;
-    let aiming=false, aimYaw=0, aimPitch=0, meter=0, meterDir=1, meterOn=false;
-    let mousePX=0, mousePY=0;
+function serveBall(m) {
+  const isP1Serve = m.serving === 'p1';
+  const dir = isP1Serve ? 1 : -1;
+  const speed = SERVE_SPEED * (isP1Serve ? m.stats.serveMult : 1);
+  const angle = (Math.random() - 0.5) * 0.5;
+  m.ball.vx = dir * speed * Math.cos(angle);
+  m.ball.vy = speed * Math.sin(angle) * 0.6;
+  m.ball.speed = speed;
+  m.ball.active = true;
+  m.ball.spin = 0;
+  Audio.serve();
+}
 
-    const disc={
-      p:{x:0,y:1.4,z:0}, v:{x:0,y:0,z:0}, r:0.10,
-      atRest:true, onGround:true, lastSafe:{x:0,y:1.4,z:0},
-      spin0:20, spin:20, bank:0, orientYaw:0, orientPitch:0
-    };
-    let strokes=0;
+function updateMatch(m, dt) {
+  if (m.pointFlash > 0) { m.pointFlash -= dt; return; }
 
-    const objects=[], waters=[]; let geyser=null;
+  // Time scale for slow-mo
+  let timeScale = 1;
+  if (m.slowmoActive && m.slowmoCharge > 0) {
+    timeScale = 0.35;
+    m.slowmoCharge -= dt;
+    if (m.slowmoCharge <= 0) { m.slowmoCharge = 0; m.slowmoActive = false; }
+  } else if (m.stats.hasSlowmo && !m.slowmoActive && m.slowmoCharge < m.slowmoMax) {
+    m.slowmoCharge += dt * 0.5; // recharge slowly
+    if (m.slowmoCharge > m.slowmoMax) m.slowmoCharge = m.slowmoMax;
+  }
+  const sDt = dt * timeScale;
 
-    // ====== Simple WebAudio (no external files)
-    const AudioBus = (()=>{
-      let ctx=null, unlocked=false, master=null, windG=null;
-      function ensure(){
-        if(ctx) return;
-        ctx = new (window.AudioContext||window.webkitAudioContext)();
-        master=ctx.createGain(); master.gain.value=0.18; master.connect(ctx.destination);
-        // ambient wind/room
-        const noiseBuf = ctx.createBuffer(1, ctx.sampleRate*2, ctx.sampleRate);
-        const d = noiseBuf.getChannelData(0); for(let i=0;i<d.length;i++){ d[i]=(Math.random()*2-1); }
-        const src = ctx.createBufferSource(); src.buffer=noiseBuf; src.loop=true;
-        const lp = ctx.createBiquadFilter(); lp.type='lowpass'; lp.frequency.value=480;
-        windG = ctx.createGain(); windG.gain.value = 0.05;
-        src.connect(lp); lp.connect(windG); windG.connect(master); src.start();
-      }
-      function playNoise({dur=0.12,startFreq=200,endFreq=80,gain=0.6}){
-        if(!ctx) return;
-        const osc = ctx.createOscillator(); osc.type='sawtooth'; // body
-        const g = ctx.createGain();
-        const f = osc.frequency;
-        f.setValueAtTime(startFreq, ctx.currentTime);
-        f.exponentialRampToValueAtTime(Math.max(1,endFreq), ctx.currentTime+dur);
-        g.gain.setValueAtTime(0.0001, ctx.currentTime);
-        g.gain.linearRampToValueAtTime(gain, ctx.currentTime + 0.01);
-        g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + dur);
-        osc.connect(g); g.connect(master); osc.start(); osc.stop(ctx.currentTime+dur+0.02);
-      }
-      function playDing({freq=1400,dur=0.2}){
-        if(!ctx) return;
-        const o = ctx.createOscillator(); o.type='triangle';
-        const g = ctx.createGain();
-        o.frequency.value=freq;
-        g.gain.setValueAtTime(0.001, ctx.currentTime);
-        g.gain.linearRampToValueAtTime(0.5, ctx.currentTime+0.01);
-        g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime+dur);
-        o.connect(g); g.connect(master); o.start(); o.stop(ctx.currentTime+dur+0.02);
-      }
-      return {
-        unlock(){ if(!ctx){ ensure(); unlocked=true; } },
-        setEnabled(on){ if(!ctx) ensure(); master.gain.value = on? 0.18 : 0; },
-        setWind(on){ if(windG) windG.gain.value = on? 0.05 : 0; },
-        throw(){ if(!ctx) return; playNoise({dur:0.14,startFreq:260,endFreq:120,gain:0.5}); },
-        chains(){ if(!ctx) return; playDing({freq:1400,dur:0.18}); playDing({freq:900,dur:0.22}); }
-      };
-    })();
+  // Update slow-mo UI
+  if (m.stats.hasSlowmo) {
+    slowmoBar.style.display = 'block';
+    document.getElementById('slowmoFill').style.width = ((m.slowmoCharge / m.slowmoMax) * 100) + '%';
+  }
 
-    const Sfx = {
-      unlock(){ AudioBus.unlock(); },
-      setEnabled(on){ AudioBus.setEnabled(on); },
-      setWind(on){ AudioBus.setWind(on); },
-      playThrow(){ AudioBus.throw(); },
-      playChain(){ AudioBus.chains(); }
-    };
-
-    // ===== Utils
-    const TAU=Math.PI*2, clamp=(v,a,b)=>v<a?a:(v>b?b:v), lerp=(a,b,t)=>a+(b-a)*t;
-
-    // ===== Procedural hole (3D corridor; silhouettes)
-    function rand(seed){ let x=seed|0; return ()=>{ x|=0; x^=x>>>16; x=Math.imul(x,0x7feb352d); x^=x>>>15; x=Math.imul(x,0x846ca68b); x^=x>>>16; return (x>>>0)/4294967295; }; }
-
-    function genHole(){
-      const r=rand((Math.random()*1e9)|0);
-      const dist=120 + r()*90; // basket z
-      const par=dist>180?5:(dist>145?4:3);
-      objects.length=0; waters.length=0; geyser=null;
-
-      // Water hazard
-      if(r()<0.6){
-        const wz=dist*(0.35+r()*0.25);
-        const wx=(r()<0.5?-1:1)*(8+r()*18);
-        const rr=6+r()*10;
-        waters.push({x:wx,z:wz,r:rr});
-      }
-
-      // Trees
-      const treeN=10+(r()*10|0);
-      for(let i=0;i<treeN;i++){
-        const tz=r()*dist*0.95+10;
-        const side=(r()<0.5?-1:1);
-        const tx=side*(12+r()*28);
-        const h=6+r()*10;
-        objects.push({type:'tree',x:tx,y:0,z:tz,h});
-      }
-
-      // Windmill landmark
-      if(r()<0.9){
-        const wz=dist*(0.6+r()*0.25);
-        const wx=(r()<0.5?-1:1)*(20+r()*24);
-        objects.push({type:'windmill',x:wx,y:0,z:wz,h:18+r()*10,r:4+r()*2,spin:r()*TAU});
-      }
-
-      // Updraft geyser
-      if(r()<0.75){
-        const gz=dist*(0.45+r()*0.15);
-        const gx=(r()<0.5?-1:1)*(4+r()*8);
-        geyser={x:gx,z:gz,rx:6+r()*4,height:22+r()*12,strength:0.65,phase:r()*TAU,speed:0.8+r()*0.8};
-      }
-
-      const basket={x:0,y:0,z:dist,pole:2.2,rimY:1.1,rimR:0.17};
-      disc.p={x:0,y:1.4,z:0}; disc.v={x:0,y:0,z:0}; disc.atRest=true; disc.onGround=true; strokes=0; disc.lastSafe={...disc.p};
-      windLift = windOn ? (Math.random()*2 - 1) : 0; updateWindUI();
-      return { par, dist, basket, seed:(Math.random()*1e9)|0 };
-    }
-
-    // ===== UI build
-    function buildDiscs(){
-      clubSeg.innerHTML='';
-      DISCS.forEach((d,idx)=>{ const b=document.createElement('button'); b.className='btn'; b.textContent=d.name; b.dataset.disc=idx;
-        b.setAttribute('aria-pressed', idx===0?'true':'false'); b.onclick=()=>selectDisc(idx); clubSeg.appendChild(b); });
-      selectDisc(0);
-    }
-    function selectDisc(i){ currentDisc = DISCS[i]; [...clubSeg.querySelectorAll('button')].forEach((b,idx)=> b.setAttribute('aria-pressed', idx===i?'true':'false')); }
-    spinSeg.addEventListener('click',(e)=>{ const btn=e.target.closest('button'); if(!btn) return; releaseMode=parseInt(btn.dataset.spin,10); [...spinSeg.querySelectorAll('button')].forEach(b=> b.setAttribute('aria-pressed', b===btn?'true':'false')); });
-    handSeg.addEventListener('click',(e)=>{ const btn=e.target.closest('button'); if(!btn) return; hand=btn.dataset.hand; [...handSeg.querySelectorAll('button')].forEach(b=> b.setAttribute('aria-pressed', b===btn?'true':'false')); });
-
-    function updateWindUI(){ const mag=Math.abs(windOn?windLift:0); elWindVal.textContent=mag.toFixed(1)+'x'; elWindArrow.style.transform=`rotate(${windLift>=0?180:0}deg)`; }
-
-    // ===== Input
-    function onPointerDown(e){ if(!disc.atRest) return; aiming=true; meterOn=true; meter=0; meterDir=1; elPowermeter.dataset.on='1'; reticle.hidden=false; try{Sfx.unlock();}catch{} e.preventDefault(); }
-    function onPointerMove(e){ if(!aiming) return; const p=e.changedTouches?e.changedTouches[0]:e; mousePX=p.clientX; mousePY=p.clientY; const nx=(mousePX/canvasW)*2-1, ny=(mousePY/canvasH)*2-1; aimYaw=nx*(40*Math.PI/180); aimPitch=-ny*(25*Math.PI/180)-(5*Math.PI/180); }
-    function onPointerUp(){ if(!aiming) return; aiming=false; meterOn=false; elPowermeter.dataset.on='0'; reticle.hidden=true; throwDisc(); }
-    function onKey(e){
-      if(e.code==='Space'){
-        if(disc.atRest && !aiming){ aiming=true; meterOn=true; meter=0; meterDir=1; elPowermeter.dataset.on='1'; reticle.hidden=false; }
-        else if(disc.atRest && aiming){ aiming=false; meterOn=false; elPowermeter.dataset.on='0'; reticle.hidden=true; throwDisc(); }
-        e.preventDefault();
-      }
-      if(e.code==='KeyR'){ newRound(); }
-    }
-    canvas.addEventListener('mousedown', onPointerDown);
-    window.addEventListener('mousemove', onPointerMove, {passive:true});
-    window.addEventListener('mouseup', onPointerUp);
-    canvas.addEventListener('touchstart', onPointerDown, {passive:false});
-    window.addEventListener('touchmove', onPointerMove, {passive:false});
-    window.addEventListener('touchend', onPointerUp);
-    window.addEventListener('keydown', onKey);
-
-    // ===== Throw
-    function throwDisc(){
-      if(!disc.atRest) return;
-      const base=34; // m/s-ish scaled
-      const power=(0.25+0.75*meter)*currentDisc.speed;
-      const speed=base*power;
-
-      const cy=Math.cos(aimYaw), sy=Math.sin(aimYaw), cp=Math.cos(aimPitch), sp=Math.sin(aimPitch);
-      const dir={x:sy*cp,y:sp,z:cy*cp};
-
-      disc.v={x:dir.x*speed,y:dir.y*speed,z:dir.z*speed}; disc.atRest=false; disc.onGround=false; strokes++; elStrokes.textContent=strokes;
-      disc.spin0=16+18*power; disc.spin=disc.spin0; disc.bank=(releaseMode*16)*Math.PI/180; disc.orientYaw=aimYaw; disc.orientPitch=aimPitch;
-
-      Sfx.playThrow(); if(navigator.vibrate) navigator.vibrate(16);
-    }
-
-    // ===== Terrain / collision
-    function groundYAt(x,z){
-      // gentle undulation—flat enough to putt, varied enough to feel alive
-      const k1=Math.sin(z*0.08)*0.4 + Math.sin(z*0.017+1.2)*0.6;
-      const k2=Math.sin((x*0.12)+z*0.03)*0.15;
-      return 0.0 + 0.3*k1 + 0.15*k2;
-    }
-    function inWater(x,z,y){ for(const w of waters){ const dx=x-w.x, dz=z-w.z; if(Math.hypot(dx,dz)<=w.r && y<=0.05) return true; } return false; }
-
-    // ===== Camera
-    const cam={p:{x:0,y:1.6,z:-0.8}, yaw:0, pitch:0, roll:0};
-    function updateCamera(dt){
-      if(disc.atRest){
-        cam.p={x:disc.p.x,y:1.6,z:disc.p.z-0.8};
-        cam.yaw=aimYaw; cam.pitch=aimPitch*0.5; cam.roll=0;
-      }else{
-        const targetYaw=Math.atan2(disc.v.x,disc.v.z);
-        const vH=Math.hypot(disc.v.x,disc.v.z);
-        const targetPitch=Math.atan2(disc.v.y,vH);
-        const k=1-Math.exp(-dt*4);
-        cam.yaw += (targetYaw-cam.yaw)*k;
-        cam.pitch += (targetPitch-cam.pitch)*k;
-        cam.roll=-disc.bank*0.4;
-
-        const back=firstPersonHard?0.02:0.9, up=firstPersonHard?0.04:0.25;
-        const cy=Math.cos(cam.yaw), sy=Math.sin(cam.yaw), cp=Math.cos(cam.pitch), sp=Math.sin(cam.pitch);
-        const bx=-sy*cp*back, by=-sp*back+up, bz=-cy*cp*back;
-        cam.p.x=disc.p.x+bx; cam.p.y=disc.p.y+by; cam.p.z=disc.p.z+bz;
-        const gy=groundYAt(cam.p.x,cam.p.z);
-        if(cam.p.y < gy+0.2) cam.p.y = gy+0.2;
+  // Serve timer
+  if (!m.ball.active) {
+    m.serveTimer -= sDt;
+    if (m.serveTimer <= 0 && !m.serveReady) {
+      m.serveReady = true;
+      if (m.serving !== 'p1') {
+        // AI serves after a short delay
+        setTimeout(() => { if (m.serveReady && !m.ball.active) serveBall(m); }, 300 + Math.random() * 400);
       }
     }
+    // Player serves by being near ball position (auto-serve after delay)
+    if (m.serveReady && m.serving === 'p1') {
+      m.serveTimer -= sDt;
+      if (m.serveTimer <= -0.5) serveBall(m); // auto-serve after 1.3s total
+    }
+  }
 
-    // ===== Physics update
-    function updatePhysics(dt){
-      if(meterOn){ meter += meterDir*1.6*dt; if(meter>1){meter=1;meterDir=-1}else if(meter<0){meter=0;meterDir=1} elPowerfill.style.width=(meter*100).toFixed(1)+'%'; }
-      if(disc.atRest) return;
+  // Move player paddle
+  const targetY = mouseY;
+  const diff = targetY - m.p1.y;
+  const maxMove = m.p1.speed * sDt;
+  m.p1.y += Math.sign(diff) * Math.min(Math.abs(diff), maxMove);
+  m.p1.y = clamp(m.p1.y, PLAY_T + m.p1.h / 2, PLAY_B - m.p1.h / 2);
 
-      const v=Math.hypot(disc.v.x,disc.v.y,disc.v.z)||1e-6, vH=Math.hypot(disc.v.x,disc.v.z);
+  // AI paddle
+  updateAI(m, sDt);
 
-      // drag
-      const drag=DRAG_K*v;
-      disc.v.x-=disc.v.x*drag*dt; disc.v.y-=disc.v.y*drag*dt; disc.v.z-=disc.v.z*drag*dt;
+  if (!m.ball.active) return;
 
-      // lift: gravity + base lift from AoA + vertical wind
-      let ay=-G;
-      if(windOn){ ay += v*v * LIFT_K * (windLift * 0.45 * 0.2); }
+  // Ball magnet effect
+  if (m.stats.magnetStr > 0 && m.ball.vx < 0) {
+    const dy = m.p1.y - m.ball.y;
+    m.ball.vy += Math.sign(dy) * m.stats.magnetStr * sDt;
+  }
 
-      const vYaw=Math.atan2(disc.v.x,disc.v.z), vPitch=Math.atan2(disc.v.y,vH);
-      const aoa=clamp((disc.orientPitch - vPitch)+0.06,-0.6,0.6);
-      ay += v*v * LIFT_K * currentDisc.glide * aoa;
+  // Move ball
+  m.ball.x += m.ball.vx * sDt;
+  m.ball.y += m.ball.vy * sDt;
+  // Apply spin as curve
+  m.ball.vy += m.ball.spin * 200 * sDt;
+  m.ball.spin *= (1 - 2 * sDt); // decay spin
 
-      // turn / fade lateral curve
-      const tPow=clamp(v/VREF,0,1), spinNorm=clamp(disc.spin/(disc.spin0||1),0,1), hyz=releaseMode;
-      let turnAmt=currentDisc.turn*(tPow*tPow)*(0.7+0.6*spinNorm)*(1+0.35*hyz);
-      let fadeAmt=currentDisc.fade*(1-tPow)*(0.9+0.5*(1-spinNorm))*(1-0.25*hyz);
-      const curve=(turnAmt - fadeAmt) * (hand==='RHBH'?1:-1);
+  // Ghost ball flicker
+  if (m.stats.ghostBall) {
+    m.ball.ghost = Math.sin(clock * 15) > 0.3 ? 1 : 0.15;
+  } else {
+    m.ball.ghost = 1;
+  }
 
-      if(vH>1e-4){
-        const rightX=disc.v.z/vH, rightZ=-disc.v.x/vH;
-        const aLat=6.5*curve;
-        disc.v.x += rightX*aLat*dt; disc.v.z += rightZ*aLat*dt;
-      }
+  // Trail
+  m.ball.trail.push({ x: m.ball.x, y: m.ball.y, t: 1 });
+  if (m.ball.trail.length > 12) m.ball.trail.shift();
+  for (const t of m.ball.trail) t.t -= sDt * 5;
 
-      // Updraft geyser
-      if(geyser){
-        const dx=disc.p.x-geyser.x, dz=disc.p.z-geyser.z, d=Math.hypot(dx,dz);
-        const xFall=Math.exp(-0.5*(d*d)/(geyser.rx*geyser.rx));
-        const yAbove=disc.p.y-groundYAt(geyser.x,geyser.z);
-        const yRatio=clamp(yAbove/geyser.height,0,1);
-        const profile=xFall*yRatio;
-        if(profile>0){
-          const turb=0.06*Math.sin(clock*18+(disc.p.x+disc.p.z)*0.3+geyser.phase);
-          const boost=geyser.strength*profile*(1+turb);
-          ay += v*v * LIFT_K * (Math.abs(aoa)+0.08) * boost; // pure up
-        }
-      }
+  // Wall bounce (top/bottom)
+  if (m.ball.y - BALL_R <= PLAY_T) { m.ball.y = PLAY_T + BALL_R; m.ball.vy = Math.abs(m.ball.vy); Audio.wall(); }
+  if (m.ball.y + BALL_R >= PLAY_B) { m.ball.y = PLAY_B - BALL_R; m.ball.vy = -Math.abs(m.ball.vy); Audio.wall(); }
 
-      // integrate
-      disc.v.y += ay*dt; disc.p.x += disc.v.x*dt; disc.p.y += disc.v.y*dt; disc.p.z += disc.v.z*dt;
+  // Paddle collision - Player (left)
+  if (m.ball.vx < 0 && m.ball.x - BALL_R <= m.p1.x + m.p1.w / 2 && m.ball.x + BALL_R >= m.p1.x - m.p1.w / 2) {
+    if (m.ball.y >= m.p1.y - m.p1.h / 2 && m.ball.y <= m.p1.y + m.p1.h / 2) {
+      paddleHit(m, m.p1, true);
+    }
+  }
 
-      // spin/bank/orientation
-      disc.spin *= Math.exp(-SPIN_DECAY*dt);
-      const bankRelax=0.2+0.9*(1-spinNorm);
-      disc.bank += (-disc.bank)*(1-Math.exp(-dt*bankRelax));
-      const noseBias=lerp(-6*Math.PI/180, 7*Math.PI/180, 1-tPow);
-      disc.orientYaw=vYaw;
-      disc.orientPitch += ((vPitch+noseBias)-disc.orientPitch)*(1-Math.exp(-dt*3.4));
+  // Paddle collision - AI (right)
+  if (m.ball.vx > 0 && m.ball.x + BALL_R >= m.p2.x - m.p2.w / 2 && m.ball.x - BALL_R <= m.p2.x + m.p2.w / 2) {
+    if (m.ball.y >= m.p2.y - m.p2.h / 2 && m.ball.y <= m.p2.y + m.p2.h / 2) {
+      paddleHit(m, m.p2, false);
+    }
+  }
 
-      // ground
-      const gy=groundYAt(disc.p.x,disc.p.z);
-      if(disc.p.y<=gy+disc.r){
-        disc.p.y=gy+disc.r;
-        if(Math.abs(disc.v.y)>2){
-          disc.v.y=-disc.v.y*0.2; disc.v.x*=0.85; disc.v.z*=0.85;
-        } else {
-          disc.v.y=0;
-          const fr=6.5, vh=Math.hypot(disc.v.x,disc.v.z), dec=fr*dt;
-          if(vh>dec){ const s=dec/vh; disc.v.x*=(1-s); disc.v.z*=(1-s); }
-          else{ disc.v.x=disc.v.z=0; disc.atRest=true; disc.onGround=true; disc.lastSafe={...disc.p}; }
-        }
+  // Scoring
+  if (m.ball.x < PLAY_L - 10) { scorePoint(m, 'p2'); }
+  if (m.ball.x > PLAY_R + 10) { scorePoint(m, 'p1'); }
+
+  // Particles
+  for (let i = m.particles.length - 1; i >= 0; i--) {
+    const p = m.particles[i];
+    p.x += p.vx * sDt; p.y += p.vy * sDt;
+    p.life -= sDt;
+    if (p.life <= 0) m.particles.splice(i, 1);
+  }
+}
+
+function paddleHit(m, paddle, isPlayer) {
+  const relY = (m.ball.y - paddle.y) / (paddle.h / 2); // -1 to 1
+  const maxAngle = 60 * Math.PI / 180;
+  let angle = relY * maxAngle * (isPlayer ? m.stats.precisionMult : 1);
+
+  const speedBoost = isPlayer ? m.stats.powerMult : 1;
+  const rallyBoost = 1 + m.rallyCount * 0.02; // gets faster each rally
+  const newSpeed = Math.min(BALL_SPEED_BASE * speedBoost * rallyBoost * (1 + Math.random() * 0.1), 600);
+
+  const dir = isPlayer ? 1 : -1;
+  m.ball.vx = dir * newSpeed * Math.cos(angle);
+  m.ball.vy = newSpeed * Math.sin(angle);
+  m.ball.speed = newSpeed;
+  m.ball.x = paddle.x + (isPlayer ? paddle.w / 2 + BALL_R + 1 : -paddle.w / 2 - BALL_R - 1);
+
+  // Add spin if player has spin upgrade
+  if (isPlayer && m.stats.spinPower > 0) {
+    m.ball.spin = relY * m.stats.spinPower;
+  }
+  // AI spin
+  if (!isPlayer && m.opp.spinSkill > 0.3) {
+    m.ball.spin = (Math.random() - 0.5) * m.opp.spinSkill * 0.5;
+  }
+
+  m.rallyCount++;
+  Audio.hit();
+
+  // Hit particles
+  for (let i = 0; i < 6; i++) {
+    m.particles.push({
+      x: m.ball.x, y: m.ball.y,
+      vx: (Math.random() - 0.5) * 100 * dir,
+      vy: (Math.random() - 0.5) * 80,
+      life: 0.3 + Math.random() * 0.2,
+      color: isPlayer ? 'var(--p1)' : m.opp.color
+    });
+  }
+}
+
+function scorePoint(m, who) {
+  m.ball.active = false;
+  if (who === 'p1') {
+    m.p1Score++;
+    m.pointText = 'POINT!';
+    Audio.score();
+  } else {
+    m.p2Score++;
+    m.pointText = 'OPPONENT SCORES';
+    Audio.lose();
+  }
+  m.pointFlash = 1.0;
+  document.getElementById('scoreP1').textContent = m.p1Score;
+  document.getElementById('scoreP2').textContent = m.p2Score;
+
+  // Score particles
+  for (let i = 0; i < 12; i++) {
+    m.particles.push({
+      x: who === 'p1' ? PLAY_R : PLAY_L, y: m.ball.y,
+      vx: (Math.random() - 0.5) * 150, vy: (Math.random() - 0.5) * 150,
+      life: 0.5 + Math.random() * 0.3,
+      color: who === 'p1' ? '#49d0ff' : '#ff6b4a'
+    });
+  }
+
+  // Check match end
+  if (m.p1Score >= m.winScore) {
+    setTimeout(() => endMatch(true), 800);
+    return;
+  }
+  if (m.p2Score >= m.loseScore) {
+    setTimeout(() => endMatch(false), 800);
+    return;
+  }
+
+  // Alternate serve
+  m.serving = m.serving === 'p1' ? 'p2' : 'p1';
+  document.getElementById('hudServe').textContent = m.serving === 'p1' ? 'YOU' : 'OPP';
+  setTimeout(() => resetBall(m), 600);
+}
+
+// ============================================================
+// AI
+// ============================================================
+function updateAI(m, dt) {
+  const opp = m.opp;
+  const p2 = m.p2;
+
+  // Predict where ball will be
+  let targetY = COURT_H / 2;
+  if (m.ball.active && m.ball.vx > 0) {
+    // Simple prediction: where will ball be at paddle x?
+    const timeToReach = (p2.x - m.ball.x) / Math.max(1, m.ball.vx);
+    targetY = m.ball.y + m.ball.vy * timeToReach;
+    // Bounce prediction (simple)
+    while (targetY < PLAY_T || targetY > PLAY_B) {
+      if (targetY < PLAY_T) targetY = 2 * PLAY_T - targetY;
+      if (targetY > PLAY_B) targetY = 2 * PLAY_B - targetY;
+    }
+    // Add inaccuracy
+    targetY += (Math.random() - 0.5) * (1 - opp.accuracy) * 80;
+  } else if (m.ball.active && m.ball.vx < 0) {
+    // Return to center-ish while ball heading away
+    targetY = COURT_H / 2 + (Math.random() - 0.5) * 40;
+  }
+
+  // Reaction delay
+  p2.reactionTimer -= dt;
+  if (p2.reactionTimer <= 0) {
+    p2.targetY = targetY;
+    p2.reactionTimer = opp.reaction * (0.8 + Math.random() * 0.4);
+  }
+
+  // Move toward target
+  const diff = p2.targetY - p2.y;
+  const maxMove = p2.speed * dt;
+  p2.y += Math.sign(diff) * Math.min(Math.abs(diff), maxMove);
+  p2.y = clamp(p2.y, PLAY_T + p2.h / 2, PLAY_B - p2.h / 2);
+}
+
+// ============================================================
+// MATCH FLOW
+// ============================================================
+function endMatch(won) {
+  gamePhase = 'match-over';
+  if (won) {
+    run.bracket[run.currentRound] = 'won';
+    Audio.win();
+    showMatchResult('YOU WIN!', true);
+    setTimeout(() => {
+      matchResult.style.display = 'none';
+      run.currentRound++;
+      if (run.currentRound >= 7) {
+        // Champion!
+        showChampion();
       } else {
-        disc.onGround=false;
+        showUpgradeScreen();
       }
-
-      // hazards
-      if(inWater(disc.p.x,disc.p.z,disc.p.y)){
-        if(navigator.vibrate) navigator.vibrate([40,40,30]);
-        strokes++; elStrokes.textContent=strokes;
-        disc.p={...disc.lastSafe}; disc.v={x:0,y:0,z:0}; disc.atRest=true; disc.onGround=true;
-      } else if(disc.onGround){
-        disc.lastSafe={...disc.p};
-      }
-
-      // basket catch
-      if(checkBasket()){
-        Sfx.playChain(); if(navigator.vibrate) navigator.vibrate([30,40,30]);
-        disc.atRest=true; disc.v={x:0,y:0,z:0};
-        setTimeout(()=>endHole(),520);
-      }
-
-      // bounds
-      if(disc.p.z < -2) disc.p.z=-2;
-      if(Math.abs(disc.p.x)>80){ disc.p.x=clamp(disc.p.x,-80,80); disc.v.x=0; }
-    }
-
-    function checkBasket(){
-      const B=hole.basket;
-      const dx=disc.p.x-B.x, dz=disc.p.z-B.z; const d=Math.hypot(dx,dz);
-      return (d < B.rimR*1.2) && (disc.p.y > (B.rimY-0.15)) && (disc.p.y < (B.rimY+0.35)) && (disc.v.y < -0.2);
-    }
-
-    // ===== Round flow
-    function newRound(){ holeIndex=0; roundData={holes:[],totalPar:0,totalStrokes:0}; screenSummary.style.display='none'; nextHole(); }
-    function nextHole(){
-      hole=genHole();
-      roundData.holes.push({par:hole.par,strokes:0}); roundData.totalPar+=hole.par;
-      elHole.textContent=(holeIndex+1); elPar.textContent=hole.par; elStrokes.textContent=(strokes=0);
-    }
-    function endHole(){
-      roundData.holes[holeIndex].strokes=strokes; roundData.totalStrokes+=strokes; holeIndex++;
-      if(holeIndex>=HOLES_PER_ROUND){
-        sumStrokes.textContent=roundData.totalStrokes; sumPar.textContent=roundData.totalPar;
-        const diff=roundData.totalStrokes-roundData.totalPar; sumScore.textContent=diff===0?'E':(diff>0?('+'+diff):diff);
-        holeBreakdown.innerHTML=''; roundData.holes.forEach((h,i)=>{ const div=document.createElement('div'); div.className='chip'; div.textContent=`Hole ${i+1}: ${h.strokes} (Par ${h.par})`; holeBreakdown.appendChild(div); });
-        screenSummary.style.display='grid';
-      } else { nextHole(); }
-    }
-
-    // ===== 3D helpers (camera space + projection)
-    function toCam(p){
-      const dx=p.x-cam.p.x, dy=p.y-cam.p.y, dz=p.z-cam.p.z;
-      const cy=Math.cos(-cam.yaw), sy=Math.sin(-cam.yaw);
-      let x=dx*cy - dz*sy, z=dx*sy + dz*cy;
-      const cp=Math.cos(-cam.pitch), sp=Math.sin(-cam.pitch);
-      let y=dy*cp - z*sp; z=dy*sp + z*cp;
-      return {x,y,z};
-    }
-    function project(p){ if(p.z<=0.05) return null; return { x: CX + (focal*(p.x/p.z)), y: CY - (focal*(p.y/p.z)), z:p.z }; }
-
-    // ===== Drawing
-    function drawSky(){
-      const g=ctx.createLinearGradient(0,0,0,canvasH);
-      const cs=getComputedStyle(document.documentElement);
-      g.addColorStop(0,cs.getPropertyValue('--bg3').trim());
-      g.addColorStop(0.55,cs.getPropertyValue('--bg2').trim());
-      g.addColorStop(1,cs.getPropertyValue('--bg1').trim());
-      ctx.fillStyle=g; ctx.fillRect(0,0,canvasW,canvasH);
-    }
-    function drawSunClouds(){
-      // sun
-      ctx.save(); ctx.globalCompositeOperation='lighter';
-      const x=canvasW*0.78,y=canvasH*0.22,r=40;
-      const halo=ctx.createRadialGradient(x,y,r*0.6,x,y,r*3.4);
-      halo.addColorStop(0,'rgba(255,210,130,0.26)');
-      halo.addColorStop(1,'rgba(255,210,130,0)');
-      ctx.fillStyle=halo; ctx.beginPath(); ctx.arc(x,y,r*3.4,0,TAU); ctx.fill();
-      ctx.globalCompositeOperation='source-over';
-      ctx.fillStyle='#fff2cf'; ctx.beginPath(); ctx.arc(x,y,r,0,TAU); ctx.fill();
-      ctx.restore();
-
-      // soft cloud bands
-      ctx.save(); ctx.globalAlpha=0.08; ctx.fillStyle='#fff';
-      const band=(yoff,seed)=>{ ctx.beginPath(); for(let i=0;i<=canvasW;i+=8){
-        const yy=yoff + Math.sin((i*0.012)+clock*0.2+seed)*6 + Math.sin((i*0.034)+clock*0.07+seed*2)*3;
-        if(i===0) ctx.moveTo(0,yy); else ctx.lineTo(i,yy); }
-        ctx.lineTo(canvasW,0); ctx.lineTo(0,0); ctx.closePath(); ctx.fill(); };
-      band(canvasH*0.28,0.6); band(canvasH*0.36,2.1);
-      ctx.restore();
-    }
-    function drawRidges(){
-      const layers=[{shade:0.15},{shade:0.25},{shade:0.35}], baseH=canvasH*0.66;
-      layers.forEach((L,idx)=>{
-        ctx.fillStyle=`rgba(0,0,0,${L.shade})`;
-        ctx.beginPath(); ctx.moveTo(0,canvasH);
-        for(let x=0;x<=canvasW;x+=12){
-          const u=x/canvasW;
-          const y=baseH + Math.sin((u+clock*0.02+idx)*TAU)*(22+idx*8) + Math.sin((u*3.2+idx*1.7)*TAU)*(5+idx*2);
-          ctx.lineTo(x,y+idx*8);
-        }
-        ctx.lineTo(canvasW,canvasH); ctx.closePath(); ctx.fill();
-      });
-    }
-    function drawGrid(){
-      ctx.save(); ctx.lineWidth=1; ctx.strokeStyle='rgba(0,0,0,0.85)';
-      const far=180;
-      for(let z=2; z<far; z+=2){
-        const p0=project(toCam({x:-80,y:groundYAt(0,z),z}));
-        const p1=project(toCam({x:80,y:groundYAt(0,z),z}));
-        if(!p0||!p1) continue;
-        ctx.globalAlpha=clamp(1 - z/180, 0.05, 0.35);
-        ctx.beginPath(); ctx.moveTo(p0.x,p0.y); ctx.lineTo(p1.x,p1.y); ctx.stroke();
-      }
-      for(let x=-80; x<=80; x+=8){
-        const p0=project(toCam({x,y:groundYAt(x,2),z:2}));
-        const p1=project(toCam({x,y:groundYAt(x,140),z:140}));
-        if(!p0||!p1) continue;
-        ctx.globalAlpha=0.06; ctx.beginPath(); ctx.moveTo(p0.x,p0.y); ctx.lineTo(p1.x,p1.y); ctx.stroke();
-      }
-      ctx.restore();
-    }
-    function drawWaterDisc(W){
-      const c=toCam({x:W.x,y:0.02,z:W.z}); const p=project(c); if(!p) return;
-      const s=focal/Math.max(0.05,c.z); const rx=W.r*s, ry=rx*0.28;
-      ctx.save();
-      ctx.fillStyle='rgba(0,0,0,0.25)'; ctx.beginPath(); ctx.ellipse(p.x,p.y+2,rx*1.04,ry*1.04,0,0,TAU); ctx.fill();
-      ctx.fillStyle=getComputedStyle(document.documentElement).getPropertyValue('--water').trim()||'#30160f';
-      ctx.globalAlpha=0.85; ctx.beginPath(); ctx.ellipse(p.x,p.y,rx,ry,0,0,TAU); ctx.fill();
-      ctx.globalAlpha=0.16; ctx.fillStyle='#fff'; ctx.beginPath(); ctx.ellipse(p.x,p.y-ry*0.25,rx*0.85,ry*0.55,0,0,TAU); ctx.fill();
-      ctx.restore();
-    }
-    function drawGeyser3D(G){
-      const drift=Math.sin(clock*G.speed+G.phase)*G.rx*0.6;
-      const c=toCam({x:G.x+drift,y:0,z:G.z}); const p=project(c); if(!p) return;
-      const s=focal/Math.max(0.05,c.z); const rx=G.rx*s, h=G.height*s;
-      ctx.save(); ctx.fillStyle='rgba(73,208,255,0.10)';
-      ctx.beginPath(); ctx.ellipse(p.x,p.y,rx,rx*0.18,0,0,TAU); ctx.fill();
-      ctx.globalAlpha=0.14;
-      for(let i=0;i<8;i++){ const t=i/7; const y=p.y - t*h + Math.sin(clock*2.0 + t*6.0)*2; const w=rx*(1-0.22*t); ctx.beginPath(); ctx.ellipse(p.x,y,w,8*(1-0.3*t),0,0,TAU); ctx.fill(); }
-      ctx.globalAlpha=1; ctx.restore();
-    }
-    function drawObject(o){
-      const c=toCam(o), p=project(c); if(!p) return; const s=focal/c.z;
-      ctx.save(); ctx.fillStyle='rgba(0,0,0,0.92)'; ctx.strokeStyle='rgba(0,0,0,0.92)';
-      if(o.type==='tree'){
-        const h=o.h*s, w=Math.max(2,0.5*s*2);
-        ctx.fillRect(p.x-w/2,p.y-h,w,h);
-        for(let k=0;k<3;k++){ const yy=p.y - h*0.25 - k*(h*0.22), ww=(h*0.22 + k*(h*0.12)); ctx.beginPath(); ctx.moveTo(p.x,yy - h*0.08); ctx.lineTo(p.x-ww,yy + h*0.08); ctx.lineTo(p.x+ww,yy + h*0.08); ctx.closePath(); ctx.fill(); }
-      } else if(o.type==='windmill'){
-        const H=o.h*s;
-        ctx.beginPath(); ctx.moveTo(p.x-6*s,p.y); ctx.lineTo(p.x+6*s,p.y); ctx.lineTo(p.x+2*s,p.y-H); ctx.lineTo(p.x-2*s,p.y-H); ctx.closePath(); ctx.fill();
-        const hubY=p.y - H - 6*s; const r=(o.r||4)*s;
-        ctx.beginPath(); ctx.arc(p.x,hubY,2*s,0,TAU); ctx.fill();
-        const spin=o.spin + clock*(1+Math.abs(windLift)*1.2);
-        blade(p.x,hubY,spin,r); blade(p.x,hubY,spin+TAU/3,r); blade(p.x,hubY,spin+2*TAU/3,r);
-      }
-      ctx.restore();
-      function blade(x,y,a,R){ ctx.save(); ctx.translate(x,y); ctx.rotate(a); const bw=Math.max(4,R*0.24); ctx.fillRect(0,-bw/2,R,bw); ctx.restore(); }
-    }
-    function drawBasket3D(B){
-      const base=toCam({x:B.x,y:0,z:B.z}), top=toCam({x:B.x,y:B.pole,z:B.z}), rim=toCam({x:B.x,y:B.rimY,z:B.z});
-      const pBase=project(base), pTop=project(top), pRim=project(rim); if(!pBase||!pTop||!pRim) return;
-      ctx.save(); ctx.strokeStyle='rgba(255,255,255,0.75)'; ctx.lineWidth=2;
-      ctx.beginPath(); ctx.moveTo(pBase.x,pBase.y); ctx.lineTo(pTop.x,pTop.y); ctx.stroke();
-      const s=focal/rim.z; const rimW=B.rimR*2*s*(canvasH/600), ry=Math.max(1,4*s*0.6);
-      ctx.fillStyle='rgba(0,0,0,0.80)'; ctx.fillRect(pRim.x - rimW*0.7, pRim.y + ry*2.5, rimW*1.4, 6);
-      ctx.beginPath(); ctx.ellipse(pRim.x,pRim.y,rimW*0.9,ry,0,0,TAU); ctx.fill();
-      ctx.strokeStyle='rgba(0,0,0,0.75)'; ctx.lineWidth=1;
-      for(let i=0;i<6;i++){ const t=i/6*TAU; const cx=pRim.x + Math.cos(t)*rimW*0.7; ctx.beginPath(); ctx.moveTo(cx,pRim.y); ctx.lineTo(cx,pRim.y+ry*2.6); ctx.stroke(); }
-      // flag
-      const stub=toCam({x:B.x,y:B.pole+0.2,z:B.z}), pStub=project(stub); if(pStub){
-        const dir=(windOn?(windLift>=0?1:-1):1), wmag=(windOn?Math.abs(windLift):0), len=22*(1+wmag*0.6), height=8, phase=clock*2.0, N=8;
-        ctx.fillStyle=getComputedStyle(document.documentElement).getPropertyValue('--accent').trim()||'#ff8a3d'; ctx.strokeStyle='rgba(0,0,0,0.25)'; ctx.lineWidth=1;
-        ctx.beginPath(); for(let i=0;i<=N;i++){ const t=i/N; const px=pStub.x + dir*t*len; const py=pStub.y + Math.sin(phase + t*TAU)*2.5; if(i===0) ctx.moveTo(px,py); else ctx.lineTo(px,py); }
-        for(let i=N;i>=0;i--){ const t=i/N; const px=pStub.x + dir*t*len; const py=pStub.y + height + Math.sin(phase + t*TAU + .6)*1.6; ctx.lineTo(px,py); } ctx.closePath(); ctx.fill(); ctx.stroke();
-      }
-      ctx.restore();
-    }
-    function drawNose(){
-      if(firstPersonHard) return;
-      ctx.save(); ctx.globalAlpha=0.25;
-      ctx.fillStyle=getComputedStyle(document.documentElement).getPropertyValue('--accent').trim()||'#ff8a3d';
-      const w=90,h=18; ctx.beginPath(); ctx.ellipse(canvasW*.5, canvasH*.82, w, h, 0, 0, TAU); ctx.fill();
-      ctx.restore();
-    }
-    function drawVignette(){
-      const g=ctx.createRadialGradient(canvasW*.5, canvasH*.58, Math.min(canvasW,canvasH)*.2, canvasW*.5, canvasH*.58, Math.max(canvasW,canvasH)*.7);
-      g.addColorStop(0,'rgba(0,0,0,0)'); g.addColorStop(1,'rgba(0,0,0,0.35)'); ctx.fillStyle=g; ctx.fillRect(0,0,canvasW,canvasH);
-    }
-
-    function draw(){
-      ctx.setTransform(DPR,0,0,DPR,0,0);
-      ctx.clearRect(0,0,canvasW,canvasH);
-      drawSky(); drawSunClouds(); drawRidges(); drawGrid();
-
-      // FIX: guard so the loop runs safely before a hole is created
-      if(!hole){ drawVignette(); return; }
-
-      for(const w of waters) drawWaterDisc(w);
-      if(geyser) drawGeyser3D(geyser);
-      for(const o of objects) drawObject(o);
-      drawBasket3D(hole.basket);
-      if(!disc.atRest) drawNose();
-      drawVignette();
-    }
-
-    // ===== Resize
-    function resize(){
-      DPR=Math.max(1, Math.min(DPR_MAX, window.devicePixelRatio||1));
-      canvas.width=Math.floor(window.innerWidth*DPR); canvas.height=Math.floor(window.innerHeight*DPR);
-      canvasW=canvas.width/DPR; canvasH=canvas.height/DPR; CX=canvasW/2; CY=canvasH*0.64;
-      focal = (canvasH / (2*Math.tan((FOV_DEG*Math.PI/180)/2)));
-    }
-    window.addEventListener('resize', resize, {passive:true}); resize();
-
-    // ===== Main loop
-    let last=0, clock=0;
-    function loop(t){ const now=t/1000; const dt=Math.min(0.033, last? now-last: 0.016); last=now; clock+=dt; updatePhysics(dt); updateCamera(dt); draw(); requestAnimationFrame(loop); }
-    requestAnimationFrame(loop);
-
-    // ===== UI wiring
-    btnPlayAgain.addEventListener('click', ()=>{ screenSummary.style.display='none'; Sfx.unlock(); newRound(); });
-    btnNewRound.addEventListener('click', ()=>{ Sfx.unlock(); newRound(); });
-    btnSettings.addEventListener('click', ()=>{ screenSettings.style.display='grid'; });
-    btnCloseSettings.addEventListener('click', ()=>{ screenSettings.style.display='none'; });
-    chkReduced.addEventListener('change', ()=>{ /* reduced motion hook if you want to tweak */ });
-    chkAudio.addEventListener('change', ()=>{ const on=chkAudio.checked; Sfx.setEnabled(on); });
-    chkWind.addEventListener('change', ()=>{ windOn=chkWind.checked; updateWindUI(); Sfx.setWind(windOn); });
-    chkFirstPerson.addEventListener('change', ()=>{ firstPersonHard=chkFirstPerson.checked; });
-
-    Sfx.setEnabled(chkAudio.checked);
-    Sfx.setWind(windOn);
-
-    buildDiscs(); updateWindUI();
+    }, 1800);
+  } else {
+    run.bracket[run.currentRound] = 'lost';
+    Audio.lose();
+    showMatchResult('DEFEATED', false);
+    setTimeout(() => {
+      matchResult.style.display = 'none';
+      showGameOver();
+    }, 2000);
   }
+}
+
+function showMatchResult(text, isWin) {
+  const el = document.getElementById('resultText');
+  el.textContent = text;
+  el.className = 'result-text ' + (isWin ? 'win-text' : 'lose-text');
+  matchResult.style.display = 'grid';
+}
+
+// ============================================================
+// RENDERING
+// ============================================================
+function drawGame(m) {
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  // Scale to virtual coordinates
+  ctx.save();
+  ctx.scale(canvas.width / COURT_W, canvas.height / COURT_H);
+
+  // Background
+  ctx.fillStyle = '#0d1117';
+  ctx.fillRect(0, 0, COURT_W, COURT_H);
+
+  // Court surface
+  const courtGrad = ctx.createLinearGradient(0, PLAY_T, 0, PLAY_B);
+  courtGrad.addColorStop(0, '#0f2a0f');
+  courtGrad.addColorStop(0.5, '#1a3a1a');
+  courtGrad.addColorStop(1, '#0f2a0f');
+  ctx.fillStyle = courtGrad;
+  ctx.fillRect(PLAY_L, PLAY_T, PLAY_R - PLAY_L, PLAY_B - PLAY_T);
+
+  // Court lines
+  ctx.strokeStyle = 'rgba(232,232,208,0.3)';
+  ctx.lineWidth = 1;
+  // Outer boundary
+  ctx.strokeRect(PLAY_L, PLAY_T, PLAY_R - PLAY_L, PLAY_B - PLAY_T);
+  // Center line
+  ctx.beginPath();
+  ctx.setLineDash([4, 4]);
+  ctx.moveTo(NET_X, PLAY_T); ctx.lineTo(NET_X, PLAY_B);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  // Kitchen zones (no-volley zone)
+  ctx.fillStyle = 'rgba(255,138,61,0.06)';
+  ctx.fillRect(NET_X - KITCHEN_W, PLAY_T, KITCHEN_W, PLAY_B - PLAY_T);
+  ctx.fillRect(NET_X, PLAY_T, KITCHEN_W, PLAY_B - PLAY_T);
+  ctx.strokeStyle = 'rgba(255,138,61,0.2)';
+  ctx.setLineDash([3, 3]);
+  ctx.beginPath();
+  ctx.moveTo(NET_X - KITCHEN_W, PLAY_T); ctx.lineTo(NET_X - KITCHEN_W, PLAY_B);
+  ctx.moveTo(NET_X + KITCHEN_W, PLAY_T); ctx.lineTo(NET_X + KITCHEN_W, PLAY_B);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  // Net
+  ctx.strokeStyle = 'rgba(200,200,170,0.6)';
+  ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(NET_X, PLAY_T); ctx.lineTo(NET_X, PLAY_B); ctx.stroke();
+  // Net diamonds
+  ctx.strokeStyle = 'rgba(200,200,170,0.15)';
+  ctx.lineWidth = 0.5;
+  for (let y = PLAY_T; y < PLAY_B; y += 12) {
+    ctx.beginPath(); ctx.moveTo(NET_X - 3, y); ctx.lineTo(NET_X, y + 6); ctx.lineTo(NET_X + 3, y); ctx.stroke();
+  }
+
+  if (!m) { ctx.restore(); return; }
+
+  // Slow-mo tint
+  if (m.slowmoActive && m.slowmoCharge > 0) {
+    ctx.fillStyle = 'rgba(73,208,255,0.04)';
+    ctx.fillRect(0, 0, COURT_W, COURT_H);
+  }
+
+  // Ball trail
+  for (const t of m.ball.trail) {
+    if (t.t <= 0) continue;
+    ctx.globalAlpha = t.t * 0.3 * m.ball.ghost;
+    ctx.fillStyle = '#ffe033';
+    ctx.beginPath(); ctx.arc(t.x, t.y, BALL_R * t.t * 0.7, 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+
+  // Ball
+  if (m.ball.active || m.serveReady) {
+    ctx.globalAlpha = m.ball.ghost;
+    // Ball glow
+    ctx.shadowColor = '#ffe033';
+    ctx.shadowBlur = 8;
+    ctx.fillStyle = '#ffe033';
+    ctx.beginPath(); ctx.arc(m.ball.x, m.ball.y, BALL_R, 0, Math.PI * 2); ctx.fill();
+    // Ball holes (wiffle ball look)
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = 'rgba(200,170,0,0.5)';
+    for (let a = 0; a < 4; a++) {
+      const ang = a * Math.PI / 2 + clock * 3;
+      ctx.beginPath(); ctx.arc(m.ball.x + Math.cos(ang) * 2.5, m.ball.y + Math.sin(ang) * 2.5, 1, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  // Player paddle
+  ctx.shadowColor = '#49d0ff';
+  ctx.shadowBlur = 6;
+  drawPaddle(m.p1.x, m.p1.y, m.p1.w, m.p1.h, '#49d0ff');
+  ctx.shadowBlur = 0;
+
+  // AI paddle
+  ctx.shadowColor = m.opp.color;
+  ctx.shadowBlur = 6;
+  drawPaddle(m.p2.x, m.p2.y, m.p2.w, m.p2.h, m.opp.color);
+  ctx.shadowBlur = 0;
+
+  // Particles
+  for (const p of m.particles) {
+    ctx.globalAlpha = clamp(p.life / 0.3, 0, 1);
+    ctx.fillStyle = p.color;
+    ctx.fillRect(p.x - 2, p.y - 2, 4, 4);
+  }
+  ctx.globalAlpha = 1;
+
+  // Point flash text
+  if (m.pointFlash > 0) {
+    ctx.globalAlpha = Math.min(1, m.pointFlash * 2);
+    ctx.fillStyle = m.pointText === 'POINT!' ? '#49d0ff' : '#ff6b4a';
+    ctx.font = 'bold 28px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText(m.pointText, COURT_W / 2, COURT_H / 2);
+    ctx.globalAlpha = 1;
+  }
+
+  // Rally counter
+  if (m.rallyCount > 3 && m.ball.active) {
+    ctx.fillStyle = 'rgba(255,255,255,0.3)';
+    ctx.font = '10px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('RALLY x' + m.rallyCount, COURT_W / 2, PLAY_T - 5);
+  }
+
+  // Serve indicator
+  if (!m.ball.active && m.serveReady && m.serving === 'p1') {
+    ctx.globalAlpha = 0.5 + Math.sin(clock * 6) * 0.3;
+    ctx.fillStyle = '#49d0ff';
+    ctx.font = '10px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('SERVING...', m.p1.x + 40, m.p1.y - 20);
+    ctx.globalAlpha = 1;
+  }
+
+  ctx.restore();
+}
+
+function drawPaddle(x, y, w, h, color) {
+  // Retro pixelated paddle
+  ctx.fillStyle = color;
+  const px = x - w / 2, py = y - h / 2;
+  ctx.fillRect(px, py, w, h);
+  // Highlight edge
+  ctx.fillStyle = 'rgba(255,255,255,0.3)';
+  ctx.fillRect(px, py, 2, h);
+  // Shadow edge
+  ctx.fillStyle = 'rgba(0,0,0,0.3)';
+  ctx.fillRect(px + w - 2, py, 2, h);
+}
+
+// ============================================================
+// SCREENS
+// ============================================================
+function hideAllScreens() {
+  screenTitle.style.display = 'none';
+  screenPreMatch.style.display = 'none';
+  screenUpgrade.style.display = 'none';
+  screenGameOver.style.display = 'none';
+  screenChampion.style.display = 'none';
+  matchResult.style.display = 'none';
+  hud.style.display = 'none';
+  slowmoBar.style.display = 'none';
+}
+
+function startNewRun() {
+  Audio.unlock();
+  run = {
+    currentRound: 0,
+    opponents: [],
+    bracket: Array(7).fill('future'),
+    seed: Math.floor(Math.random() * 1e9)
+  };
+  upgrades = [];
+  // Generate all opponents
+  for (let i = 0; i < 7; i++) {
+    run.opponents.push(genOpponent(i, run.seed + i * 777));
+  }
+  run.bracket[0] = 'current';
+  showPreMatch();
+}
+
+function showPreMatch() {
+  hideAllScreens();
+  gamePhase = 'prematch';
+  screenPreMatch.style.display = 'grid';
+
+  const opp = run.opponents[run.currentRound];
+  document.getElementById('oppName').textContent = opp.name;
+  document.getElementById('oppTitle').textContent = '"' + opp.title + '"';
+
+  // Stats bars
+  const statsEl = document.getElementById('oppStats');
+  statsEl.innerHTML = '';
+  const stats = [
+    { name: 'SPD', val: opp.speed / (AI_SPEED_BASE * 1.3) },
+    { name: 'ACC', val: opp.accuracy },
+    { name: 'AGR', val: opp.aggression },
+    { name: 'SPN', val: opp.spinSkill }
+  ];
+  for (const s of stats) {
+    const div = document.createElement('div');
+    div.className = 'stat';
+    div.innerHTML = s.name + ' <span class="stat-bar"><span class="stat-fill" style="width:' + Math.round(s.val * 100) + '%"></span></span>';
+    statsEl.appendChild(div);
+  }
+
+  // Bracket
+  const bracketEl = document.getElementById('bracketDisplay');
+  bracketEl.innerHTML = '';
+  const labels = ['QF1','QF2','QF3','QF4','SF1','SF2','F'];
+  for (let i = 0; i < 7; i++) {
+    const div = document.createElement('div');
+    div.className = 'bracket-slot ' + (i === run.currentRound ? 'current' : run.bracket[i]);
+    div.textContent = labels[i];
+    bracketEl.appendChild(div);
+  }
+
+  // Player buffs
+  const buffsEl = document.getElementById('playerBuffs');
+  buffsEl.innerHTML = '';
+  if (upgrades.length === 0) {
+    buffsEl.innerHTML = '<span style="font-size:0.65rem;color:var(--muted)">No upgrades yet</span>';
+  } else {
+    for (const u of upgrades) {
+      const span = document.createElement('span');
+      span.className = 'buff';
+      span.textContent = u.icon + ' ' + u.name;
+      buffsEl.appendChild(span);
+    }
+  }
+
+  const winScore = WIN_SCORE_BASE + Math.floor(run.currentRound / 3);
+  document.getElementById('targetScore').textContent = winScore;
+
+  // Round label
+  const roundNames = ['Quarter-Final 1','Quarter-Final 2','Quarter-Final 3','Quarter-Final 4','Semi-Final 1','Semi-Final 2','Grand Final'];
+  document.getElementById('hudRound').textContent = run.currentRound + 1;
+  document.getElementById('hudMatch').textContent = labels[run.currentRound];
+}
+
+function startMatch() {
+  hideAllScreens();
+  hud.style.display = 'flex';
+  gamePhase = 'playing';
+
+  const opp = run.opponents[run.currentRound];
+  const stats = computePlayerStats(upgrades);
+  matchState = createMatch(opp, stats, run.currentRound);
+
+  document.getElementById('scoreP1').textContent = '0';
+  document.getElementById('scoreP2').textContent = '0';
+  document.getElementById('hudServe').textContent = 'YOU';
+
+  resetBall(matchState);
+}
+
+function showUpgradeScreen() {
+  hideAllScreens();
+  gamePhase = 'upgrading';
+  screenUpgrade.style.display = 'grid';
+
+  const choices = pickUpgradeChoices(upgrades);
+  const grid = document.getElementById('upgradeGrid');
+  grid.innerHTML = '';
+
+  for (const c of choices) {
+    const div = document.createElement('div');
+    div.className = 'upgrade-card';
+    div.innerHTML = '<div class="icon">' + c.icon + '</div><div class="name">' + c.name + '</div><div class="desc">' + c.desc + '</div>';
+    div.addEventListener('click', () => {
+      Audio.upgrade();
+      upgrades.push({ id: c.id, icon: c.icon, name: c.name });
+      run.bracket[run.currentRound] = 'current';
+      showPreMatch();
+    });
+    grid.appendChild(div);
+  }
+}
+
+function showGameOver() {
+  hideAllScreens();
+  gamePhase = 'gameover';
+  screenGameOver.style.display = 'grid';
+
+  const roundNames = ['Quarter-Final 1','Quarter-Final 2','Quarter-Final 3','Quarter-Final 4','Semi-Final 1','Semi-Final 2','Grand Final'];
+  document.getElementById('goRound').textContent = roundNames[run.currentRound];
+  document.getElementById('goWins').textContent = run.currentRound;
+
+  const messages = [
+    'The kitchen claimed another soul...',
+    'Your paddle wasn\'t ready for this.',
+    'Dink harder next time.',
+    'The tournament continues without you.',
+    'Every champion starts with defeat.',
+    'The court remembers all.'
+  ];
+  document.getElementById('goMessage').textContent = messages[Math.floor(Math.random() * messages.length)];
+}
+
+function showChampion() {
+  hideAllScreens();
+  gamePhase = 'champion';
+  screenChampion.style.display = 'grid';
+  document.getElementById('champUpgrades').textContent = upgrades.length;
+
+  const buffsEl = document.getElementById('champBuffs');
+  buffsEl.innerHTML = '';
+  for (const u of upgrades) {
+    const span = document.createElement('span');
+    span.className = 'buff';
+    span.textContent = u.icon + ' ' + u.name;
+    buffsEl.appendChild(span);
+  }
+}
+
+// ============================================================
+// INPUT
+// ============================================================
+function getCanvasY(clientY) {
+  const rect = canvas.getBoundingClientRect();
+  return ((clientY - rect.top) / rect.height) * COURT_H;
+}
+
+canvas.addEventListener('mousemove', e => { mouseY = getCanvasY(e.clientY); mouseActive = true; });
+canvas.addEventListener('touchmove', e => { e.preventDefault(); mouseY = getCanvasY(e.touches[0].clientY); mouseActive = true; }, { passive: false });
+canvas.addEventListener('touchstart', e => { e.preventDefault(); mouseY = getCanvasY(e.touches[0].clientY); mouseActive = true; }, { passive: false });
+
+window.addEventListener('keydown', e => {
+  if (e.code === 'Space' && matchState && matchState.stats.hasSlowmo && gamePhase === 'playing') {
+    if (matchState.slowmoCharge > 0.5) {
+      matchState.slowmoActive = true;
+      Audio.slowmo();
+    }
+    e.preventDefault();
+  }
+});
+window.addEventListener('keyup', e => {
+  if (e.code === 'Space' && matchState) {
+    matchState.slowmoActive = false;
+  }
+});
+
+// ============================================================
+// BUTTON WIRING
+// ============================================================
+document.getElementById('btnStart').addEventListener('click', startNewRun);
+document.getElementById('btnFight').addEventListener('click', startMatch);
+document.getElementById('btnRetry').addEventListener('click', startNewRun);
+document.getElementById('btnNewRun').addEventListener('click', startNewRun);
+
+// ============================================================
+// RESIZE
+// ============================================================
+function resize() {
+  DPR = Math.min(2, window.devicePixelRatio || 1);
+  const w = window.innerWidth, h = window.innerHeight;
+  // Maintain aspect ratio
+  const aspect = COURT_W / COURT_H;
+  let cw, ch;
+  if (w / h > aspect) { ch = h; cw = h * aspect; } else { cw = w; ch = w / aspect; }
+  canvas.width = Math.floor(cw * DPR);
+  canvas.height = Math.floor(ch * DPR);
+  canvas.style.width = cw + 'px';
+  canvas.style.height = ch + 'px';
+}
+window.addEventListener('resize', resize, { passive: true });
+resize();
+
+// ============================================================
+// UTILS
+// ============================================================
+function clamp(v, a, b) { return v < a ? a : v > b ? b : v; }
+
+// ============================================================
+// MAIN LOOP
+// ============================================================
+function loop(t) {
+  const now = t / 1000;
+  const dt = Math.min(0.05, lastTime ? now - lastTime : 0.016);
+  lastTime = now;
+  clock += dt;
+
+  if (gamePhase === 'playing' && matchState) {
+    updateMatch(matchState, dt);
+    drawGame(matchState);
+  } else {
+    // Draw idle court
+    drawGame(null);
+  }
+
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+
 })();
 </script>
 </body>
