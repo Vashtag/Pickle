@@ -5,29 +5,18 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"/>
 <title>Pickle Brawl — Roguelike Pickleball Tournament</title>
 <style>
-  @font-face { font-family:'PB'; src:local('Courier New'),local('Courier'),local(monospace); }
   :root {
-    --bg:#0a0a14; --court:#1a3a1a; --line:#e8e8d0; --net:#ccccaa;
+    --bg:#0a0a14; --court:#1a6a2a; --line:#e8e8d0; --net:#ccccaa;
     --p1:#49d0ff; --p2:#ff6b4a; --ball:#ffe033;
     --accent:#ff8a3d; --accent2:#49d0ff; --accent3:#86efac;
     --panel:rgba(10,10,20,0.92); --text:#e6edf3; --muted:#7a8a9a;
-    --crt-line:rgba(0,0,0,0.08);
   }
   *{box-sizing:border-box;margin:0;padding:0}
-  html,body{height:100%;background:var(--bg);color:var(--text);font-family:'PB',monospace;overflow:hidden;user-select:none;-webkit-user-select:none}
-  canvas{display:block;width:100vw;height:100vh;image-rendering:pixelated;image-rendering:crisp-edges}
-  #wrap{position:fixed;inset:0;display:grid;place-items:center}
-
-  /* Scanline overlay */
-  #scanlines{position:fixed;inset:0;pointer-events:none;z-index:10;
-    background:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,0.06) 2px,rgba(0,0,0,0.06) 4px);
-  }
-  #crt-glow{position:fixed;inset:0;pointer-events:none;z-index:9;
-    box-shadow:inset 0 0 80px rgba(0,0,0,0.5),inset 0 0 160px rgba(0,0,0,0.3);
-    border-radius:8px;
-  }
-
-  /* Screens */
+  html,body{height:100%;background:var(--bg);color:var(--text);font-family:'Courier New',Courier,monospace;overflow:hidden;user-select:none;-webkit-user-select:none}
+  canvas{display:block;image-rendering:pixelated;image-rendering:crisp-edges}
+  #wrap{position:fixed;inset:0;display:grid;place-items:center;background:#000}
+  #scanlines{position:fixed;inset:0;pointer-events:none;z-index:10;background:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,0.06) 2px,rgba(0,0,0,0.06) 4px)}
+  #crt-glow{position:fixed;inset:0;pointer-events:none;z-index:9;box-shadow:inset 0 0 80px rgba(0,0,0,0.5),inset 0 0 160px rgba(0,0,0,0.3);border-radius:8px}
   .screen{position:fixed;inset:0;display:grid;place-items:center;z-index:20;background:rgba(0,0,0,0.85)}
   .card{background:var(--panel);border:2px solid rgba(255,255,255,0.1);border-radius:4px;padding:1.5rem;max-width:600px;width:min(600px,92vw);text-align:center}
   .card h1{font-size:1.8rem;margin-bottom:0.5rem;color:var(--accent);text-transform:uppercase;letter-spacing:3px;text-shadow:0 0 20px rgba(255,138,61,0.5)}
@@ -37,17 +26,12 @@
   .btn{appearance:none;border:2px solid var(--accent);background:rgba(255,138,61,0.15);color:var(--accent);padding:0.6rem 1.4rem;font-family:inherit;font-size:1rem;font-weight:bold;text-transform:uppercase;letter-spacing:2px;cursor:pointer;border-radius:2px;transition:all 0.15s}
   .btn:hover{background:rgba(255,138,61,0.3);box-shadow:0 0 15px rgba(255,138,61,0.3)}
   .btn:active{transform:scale(0.97)}
-  .btn-small{padding:0.4rem 0.8rem;font-size:0.8rem}
-
-  /* Upgrade cards */
   .upgrades{display:grid;grid-template-columns:repeat(3,1fr);gap:0.6rem;margin:1rem 0}
   .upgrade-card{border:2px solid rgba(255,255,255,0.1);border-radius:4px;padding:0.8rem 0.5rem;cursor:pointer;transition:all 0.15s;background:rgba(255,255,255,0.03)}
   .upgrade-card:hover{border-color:var(--accent);background:rgba(255,138,61,0.1);box-shadow:0 0 12px rgba(255,138,61,0.2)}
   .upgrade-card .icon{font-size:1.8rem;margin-bottom:0.3rem}
   .upgrade-card .name{font-size:0.8rem;font-weight:bold;color:var(--text);margin-bottom:0.2rem}
   .upgrade-card .desc{font-size:0.65rem;color:var(--muted)}
-
-  /* Bracket display */
   .bracket{display:flex;gap:0.3rem;margin:0.8rem 0;justify-content:center;flex-wrap:wrap}
   .bracket-slot{width:28px;height:28px;border:2px solid rgba(255,255,255,0.15);border-radius:2px;display:grid;place-items:center;font-size:0.6rem;font-weight:bold}
   .bracket-slot.won{border-color:var(--accent3);color:var(--accent3);background:rgba(134,239,172,0.1)}
@@ -55,8 +39,6 @@
   .bracket-slot.lost{border-color:#ff4444;color:#ff4444;background:rgba(255,68,68,0.1)}
   .bracket-slot.future{opacity:0.3}
   @keyframes pulse{0%,100%{box-shadow:0 0 4px rgba(255,138,61,0.3)}50%{box-shadow:0 0 12px rgba(255,138,61,0.6)}}
-
-  /* HUD */
   .hud{position:fixed;top:0;left:0;right:0;pointer-events:none;z-index:15;padding:0.5rem 0.8rem;display:flex;justify-content:space-between;align-items:flex-start}
   .hud-left,.hud-right,.hud-center{display:flex;gap:0.4rem;align-items:center}
   .hud-center{position:absolute;left:50%;transform:translateX(-50%);top:0.5rem}
@@ -66,19 +48,13 @@
   .score-big{font-size:1.6rem;font-weight:bold;min-width:3ch;text-align:center}
   .score-p1{color:var(--p1)}
   .score-p2{color:var(--p2)}
-
-  /* Slow-mo indicator */
   .slowmo-bar{position:fixed;bottom:0.6rem;left:50%;transform:translateX(-50%);width:min(200px,40vw);height:8px;border:1px solid rgba(255,255,255,0.15);border-radius:2px;z-index:15;background:rgba(0,0,0,0.5);overflow:hidden;display:none}
   .slowmo-fill{height:100%;background:linear-gradient(90deg,var(--accent2),var(--accent3));transition:width 0.1s}
-
-  /* Match result overlay */
   .match-result{position:fixed;inset:0;display:grid;place-items:center;z-index:25;background:rgba(0,0,0,0.8);display:none}
   .result-text{font-size:2.5rem;font-weight:bold;text-transform:uppercase;letter-spacing:4px;text-shadow:0 0 30px currentColor;animation:resultIn 0.5s ease-out}
   @keyframes resultIn{from{transform:scale(2);opacity:0}to{transform:scale(1);opacity:1}}
   .win-text{color:var(--accent3)}
   .lose-text{color:#ff4444}
-
-  /* Opponent intro */
   .opponent-intro{margin:0.8rem 0}
   .opponent-name{font-size:1.2rem;font-weight:bold;color:var(--p2);text-transform:uppercase;letter-spacing:2px}
   .opponent-title{font-size:0.7rem;color:var(--muted);font-style:italic}
@@ -86,21 +62,25 @@
   .stat{font-size:0.65rem;color:var(--muted)}
   .stat-bar{display:inline-block;width:40px;height:4px;background:rgba(255,255,255,0.1);border-radius:2px;vertical-align:middle;margin-left:0.2rem;overflow:hidden}
   .stat-fill{height:100%;background:var(--p2);border-radius:2px}
-
-  /* Player upgrades display */
   .player-buffs{display:flex;gap:0.3rem;justify-content:center;margin:0.5rem 0;flex-wrap:wrap}
   .buff{font-size:0.6rem;padding:0.15rem 0.4rem;border:1px solid rgba(73,208,255,0.3);border-radius:2px;color:var(--accent2);background:rgba(73,208,255,0.08)}
+  /* Crosshair */
+  .crosshair{position:fixed;pointer-events:none;z-index:12;display:none}
+  .crosshair::before,.crosshair::after{content:'';position:absolute;background:rgba(255,255,255,0.5)}
+  .crosshair::before{width:20px;height:2px;left:-10px;top:-1px}
+  .crosshair::after{width:2px;height:20px;left:-1px;top:-10px}
 </style>
 </head>
 <body>
 <div id="wrap"><canvas id="game"></canvas></div>
 <div id="scanlines"></div>
 <div id="crt-glow"></div>
+<div class="crosshair" id="crosshair"></div>
 
 <!-- HUD -->
 <div class="hud" id="hud" style="display:none">
   <div class="hud-left">
-    <div class="chip"><span class="label">Round</span><strong id="hudRound">1</strong>/8</div>
+    <div class="chip"><span class="label">Round</span><strong id="hudRound">1</strong>/7</div>
     <div class="chip"><span class="label">Match</span><strong id="hudMatch">QF1</strong></div>
   </div>
   <div class="hud-center">
@@ -112,7 +92,6 @@
     <div class="chip"><span class="label">Serving</span><strong id="hudServe">YOU</strong></div>
   </div>
 </div>
-
 <div class="slowmo-bar" id="slowmoBar"><div class="slowmo-fill" id="slowmoFill" style="width:100%"></div></div>
 
 <!-- Title Screen -->
@@ -124,7 +103,7 @@
     Between matches, choose powerful upgrades.<br/>
     <span class="highlight">Lose once and it's all over.</span></p>
     <p style="margin-top:0.6rem;font-size:0.75rem">
-      <strong>Controls:</strong> Mouse/Touch = move paddle &bull; Auto-swing on contact<br/>
+      <strong>Controls:</strong> Move mouse to position &bull; Click to swing when ball is near<br/>
       Spacebar = activate Slow-Mo (when available)
     </p>
     <div style="margin-top:1rem"><button class="btn" id="btnStart">Enter Tournament</button></div>
@@ -142,7 +121,7 @@
     </div>
     <div class="bracket" id="bracketDisplay"></div>
     <div class="player-buffs" id="playerBuffs"></div>
-    <p style="font-size:0.7rem;color:var(--muted);margin:0.5rem 0">First to <strong id="targetScore">5</strong> points wins the match</p>
+    <p style="font-size:0.7rem;color:var(--muted);margin:0.5rem 0">First to <strong id="targetScore">5</strong> points wins</p>
     <div style="margin-top:0.8rem"><button class="btn" id="btnFight">Fight!</button></div>
   </div>
 </div>
@@ -188,69 +167,61 @@
 'use strict';
 
 // ============================================================
-// CONSTANTS
+// 3D COURT DIMENSIONS (meters, real pickleball proportions)
+// Court is 6.1m wide x 13.4m long. Net at center (z=6.7m).
+// Kitchen (no-volley) = 2.13m from net each side.
+// Player stands at z~0.5 (near side), opponent at z~12.9 (far side).
 // ============================================================
-const COURT_W = 640, COURT_H = 360;
-const NET_X = COURT_W / 2;
-const PADDLE_W = 8, PADDLE_H_BASE = 48;
-const BALL_R = 5;
-const BALL_SPEED_BASE = 280;
-const SERVE_SPEED = 220;
-const AI_SPEED_BASE = 160;
-const KITCHEN_W = 80; // no-volley zone width from net
-const WIN_SCORE_BASE = 5;
-const GRAVITY = 320;
+const CW = 6.1, CL = 13.4, NET_Z = 6.7, KITCHEN_D = 2.13;
+const NET_H = 0.914; // net height in meters
+const BALL_RADIUS = 0.037; // ~37mm
 
-// Court boundaries (play area within canvas)
-const MARGIN_TOP = 40, MARGIN_BOT = 20, MARGIN_SIDE = 30;
-const PLAY_L = MARGIN_SIDE, PLAY_R = COURT_W - MARGIN_SIDE;
-const PLAY_T = MARGIN_TOP, PLAY_B = COURT_H - MARGIN_BOT;
+// Virtual canvas
+const VW = 800, VH = 500;
+
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+
+// ============================================================
+// Camera: first-person behind the baseline looking at opponent
+// ============================================================
+const CAM = { x: 0, y: 1.5, z: -0.3, fov: 75 };
+let focal = 1;
+
+function project(wx, wy, wz) {
+  // world -> camera space (camera looks down +Z axis)
+  const dx = wx - CAM.x, dy = wy - CAM.y, dz = wz - CAM.z;
+  if (dz < 0.05) return null;
+  const sx = VW / 2 + (dx / dz) * focal;
+  const sy = VH / 2 - (dy / dz) * focal;
+  return { x: sx, y: sy, z: dz, scale: focal / dz };
+}
 
 // ============================================================
 // GAME STATE
 // ============================================================
-const canvas = document.getElementById('game');
-const ctx = canvas.getContext('2d');
-
-let DPR = Math.min(2, window.devicePixelRatio || 1);
-let cW, cH, scaleX, scaleY;
-
-// Screens
 const screenTitle = document.getElementById('screenTitle');
 const screenPreMatch = document.getElementById('screenPreMatch');
 const screenUpgrade = document.getElementById('screenUpgrade');
 const screenGameOver = document.getElementById('screenGameOver');
 const screenChampion = document.getElementById('screenChampion');
-const matchResult = document.getElementById('matchResult');
+const matchResultEl = document.getElementById('matchResult');
 const hud = document.getElementById('hud');
 const slowmoBar = document.getElementById('slowmoBar');
+const crosshair = document.getElementById('crosshair');
 
-// Tournament state
-let run = null; // current run data
-let matchState = null; // current match
-
-// Player upgrades (accumulated across run)
-let upgrades = [];
-
-// Input
-let mouseY = COURT_H / 2;
-let mouseActive = false;
-let slowmoKey = false;
-
-// Timing
+let run = null, matchState = null, upgrades = [];
+let mouseX = VW / 2, mouseY = VH / 2;
+let mouseClicked = false;
 let lastTime = 0, clock = 0;
-let gamePhase = 'title'; // title, prematch, playing, point-scored, match-over, upgrading, gameover, champion
+let gamePhase = 'title';
 
 // ============================================================
 // OPPONENT GENERATION
 // ============================================================
 const FIRST_NAMES = ['Crusher','Blitz','Shadow','Viper','Thunder','Spike','Ghost','Havoc','Fury','Ace','Phantom','Storm','Razor','Tank','Nova','Bolt','Fang','Hex','Jinx','Onyx'];
 const LAST_NAMES = ['McSmash','Dinkerson','Paddleton','Volleysworth','Spinetti','Dropper','Slicer','Netburn','Courtside','Baseline'];
-const TITLES = [
-  'The Kitchen Dweller','Dink Master','Power Server','Spin Doctor','Net Ninja',
-  'The Lob King','Baseline Brawler','Drop Shot Artist','The Wall','Rally Machine',
-  'Speed Demon','Angle Grinder','The Finisher','Court Ghost','Paddle Fury'
-];
+const TITLES = ['The Kitchen Dweller','Dink Master','Power Server','Spin Doctor','Net Ninja','The Lob King','Baseline Brawler','Drop Shot Artist','The Wall','Rally Machine','Speed Demon','Angle Grinder','The Finisher','Court Ghost','Paddle Fury'];
 
 function seededRand(seed) {
   let s = seed | 0;
@@ -259,786 +230,1007 @@ function seededRand(seed) {
 
 function genOpponent(round, seed) {
   const r = seededRand(seed);
-  const diff = 0.25 + (round / 7) * 0.7; // 0.25 to ~0.95
-  const first = FIRST_NAMES[Math.floor(r() * FIRST_NAMES.length)];
-  const last = LAST_NAMES[Math.floor(r() * LAST_NAMES.length)];
-  const title = TITLES[Math.floor(r() * TITLES.length)];
-
+  const diff = 0.25 + (round / 7) * 0.7;
   return {
-    name: first + ' ' + last,
-    title: title,
-    speed: AI_SPEED_BASE * (0.6 + diff * 0.7),
-    reaction: 0.25 - diff * 0.18, // lower = faster reaction
-    accuracy: 0.5 + diff * 0.45,
+    name: FIRST_NAMES[Math.floor(r() * FIRST_NAMES.length)] + ' ' + LAST_NAMES[Math.floor(r() * LAST_NAMES.length)],
+    title: TITLES[Math.floor(r() * TITLES.length)],
+    speed: 2.5 + diff * 3.5,       // lateral m/s
+    reaction: 0.3 - diff * 0.2,     // seconds delay
+    accuracy: 0.4 + diff * 0.5,     // 0-1
     aggression: 0.3 + r() * 0.5,
     spinSkill: diff * 0.8,
-    paddleH: PADDLE_H_BASE * (0.9 + r() * 0.2),
-    color: `hsl(${Math.floor(r()*360)}, 70%, 60%)`,
-    seed: seed
+    reachRadius: 0.8 + diff * 0.3,  // how far they can lunge
+    color: `hsl(${Math.floor(r()*360)}, 70%, 55%)`,
+    seed
   };
 }
 
 // ============================================================
-// UPGRADE POOL
+// UPGRADES
 // ============================================================
 const ALL_UPGRADES = [
-  { id:'bigger_paddle', icon:'🏓', name:'Mega Paddle', desc:'+30% paddle size', effect:s=>{s.paddleMult*=1.3} },
-  { id:'power_shots', icon:'💥', name:'Power Shots', desc:'+20% ball speed on hit', effect:s=>{s.powerMult*=1.2} },
-  { id:'slowmo', icon:'⏳', name:'Slow-Mo', desc:'Spacebar slows time (3s charge)', effect:s=>{s.hasSlowmo=true;s.slowmoMax+=3} },
-  { id:'speed_up', icon:'⚡', name:'Quick Feet', desc:'+25% paddle speed', effect:s=>{s.speedMult*=1.25} },
-  { id:'spin_master', icon:'🌀', name:'Spin Master', desc:'Add curve to your shots', effect:s=>{s.spinPower+=0.4} },
-  { id:'magnet', icon:'🧲', name:'Ball Magnet', desc:'Ball curves toward paddle', effect:s=>{s.magnetStr+=25} },
+  { id:'bigger_paddle', icon:'🏓', name:'Mega Paddle', desc:'+35% reach radius', effect:s=>{s.reachMult*=1.35} },
+  { id:'power_shots', icon:'💥', name:'Power Shots', desc:'+25% shot speed', effect:s=>{s.powerMult*=1.25} },
+  { id:'slowmo', icon:'⏳', name:'Slow-Mo', desc:'Spacebar slows time (3s)', effect:s=>{s.hasSlowmo=true;s.slowmoMax+=3} },
+  { id:'speed_up', icon:'⚡', name:'Quick Feet', desc:'+30% move speed', effect:s=>{s.speedMult*=1.3} },
+  { id:'spin_master', icon:'🌀', name:'Spin Master', desc:'Shots curve more', effect:s=>{s.spinPower+=0.5} },
+  { id:'magnet', icon:'🧲', name:'Ball Magnet', desc:'Wider auto-hit zone', effect:s=>{s.reachMult*=1.2} },
   { id:'intimidate', icon:'👁', name:'Intimidate', desc:'Opponent 15% slower', effect:s=>{s.oppDebuff*=0.85} },
   { id:'second_wind', icon:'💨', name:'Second Wind', desc:'+2 points needed to lose', effect:s=>{s.bonusHP+=2} },
-  { id:'precise', icon:'🎯', name:'Precision', desc:'Tighter angle control', effect:s=>{s.precisionMult*=0.7} },
-  { id:'wall', icon:'🧱', name:'The Wall', desc:'Paddle blocks wider area', effect:s=>{s.paddleMult*=1.15;s.speedMult*=1.1} },
-  { id:'fire_serve', icon:'🔥', name:'Fire Serve', desc:'Serves are 40% faster', effect:s=>{s.serveMult*=1.4} },
-  { id:'ghost_ball', icon:'👻', name:'Ghost Ball', desc:'Ball flickers (harder to read)', effect:s=>{s.ghostBall=true} },
+  { id:'precise', icon:'🎯', name:'Precision', desc:'Better aim control', effect:s=>{s.aimMult*=1.3} },
+  { id:'wall', icon:'🧱', name:'The Wall', desc:'Reach + speed boost', effect:s=>{s.reachMult*=1.15;s.speedMult*=1.15} },
+  { id:'fire_serve', icon:'🔥', name:'Fire Serve', desc:'Serves 40% faster', effect:s=>{s.serveMult*=1.4} },
+  { id:'ghost_ball', icon:'👻', name:'Ghost Ball', desc:'Ball flickers for opponent', effect:s=>{s.ghostBall=true} },
 ];
 
 function pickUpgradeChoices(existing) {
   const pool = ALL_UPGRADES.filter(u => {
     const count = existing.filter(e => e.id === u.id).length;
-    if (u.id === 'slowmo' && count >= 1) return false; // unique
+    if (u.id === 'slowmo' && count >= 1) return false;
     if (u.id === 'ghost_ball' && count >= 1) return false;
     if (u.id === 'second_wind' && count >= 2) return false;
     if (count >= 3) return false;
     return true;
   });
-  // Shuffle and pick 3
   for (let i = pool.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [pool[i], pool[j]] = [pool[j], pool[i]]; }
   return pool.slice(0, 3);
 }
 
-// ============================================================
-// PLAYER STATS (computed from upgrades)
-// ============================================================
-function computePlayerStats(upgradeList) {
-  const s = {
-    paddleMult: 1, powerMult: 1, speedMult: 1, spinPower: 0,
-    magnetStr: 0, oppDebuff: 1, bonusHP: 0, precisionMult: 1,
-    serveMult: 1, hasSlowmo: false, slowmoMax: 0, ghostBall: false
-  };
-  for (const u of upgradeList) {
-    const def = ALL_UPGRADES.find(a => a.id === u.id);
-    if (def) def.effect(s);
-  }
+function computePlayerStats(list) {
+  const s = { reachMult:1, powerMult:1, speedMult:1, spinPower:0, oppDebuff:1, bonusHP:0, aimMult:1, serveMult:1, hasSlowmo:false, slowmoMax:0, ghostBall:false };
+  for (const u of list) { const d = ALL_UPGRADES.find(a => a.id === u.id); if (d) d.effect(s); }
   return s;
 }
 
 // ============================================================
 // AUDIO
 // ============================================================
-const Audio = (() => {
+const Sfx = (() => {
   let actx = null, master = null;
-  function ensure() {
-    if (actx) return;
-    actx = new (window.AudioContext || window.webkitAudioContext)();
-    master = actx.createGain(); master.gain.value = 0.15; master.connect(actx.destination);
-  }
-  function play(freq, dur, type='square', vol=0.5) {
-    if (!actx) return;
-    const o = actx.createOscillator(); o.type = type;
-    const g = actx.createGain();
-    o.frequency.setValueAtTime(freq, actx.currentTime);
-    g.gain.setValueAtTime(vol, actx.currentTime);
-    g.gain.exponentialRampToValueAtTime(0.001, actx.currentTime + dur);
-    o.connect(g); g.connect(master); o.start(); o.stop(actx.currentTime + dur + 0.02);
-  }
+  function ensure() { if (actx) return; actx = new (window.AudioContext || window.webkitAudioContext)(); master = actx.createGain(); master.gain.value = 0.18; master.connect(actx.destination); }
+  function play(freq, dur, type='square', vol=0.5) { if (!actx) return; const o = actx.createOscillator(); o.type = type; const g = actx.createGain(); o.frequency.setValueAtTime(freq, actx.currentTime); g.gain.setValueAtTime(vol, actx.currentTime); g.gain.exponentialRampToValueAtTime(0.001, actx.currentTime + dur); o.connect(g); g.connect(master); o.start(); o.stop(actx.currentTime + dur + 0.02); }
   return {
     unlock() { ensure(); },
-    hit() { play(440, 0.08, 'square', 0.4); },
-    wall() { play(220, 0.06, 'triangle', 0.3); },
-    score() { play(880, 0.15, 'square', 0.5); setTimeout(() => play(1100, 0.2, 'square', 0.4), 100); },
-    lose() { play(200, 0.3, 'sawtooth', 0.4); setTimeout(() => play(150, 0.4, 'sawtooth', 0.3), 150); },
-    win() { play(660, 0.1, 'square', 0.4); setTimeout(() => play(880, 0.1, 'square', 0.4), 100); setTimeout(() => play(1100, 0.15, 'square', 0.5), 200); },
-    serve() { play(330, 0.1, 'triangle', 0.3); },
-    upgrade() { play(523, 0.1, 'square', 0.3); setTimeout(() => play(659, 0.1, 'square', 0.3), 80); setTimeout(() => play(784, 0.15, 'square', 0.4), 160); },
-    slowmo() { play(180, 0.5, 'sine', 0.2); }
+    hit() { play(660, 0.06, 'square', 0.35); play(990, 0.04, 'triangle', 0.2); },
+    bounce() { play(280, 0.05, 'triangle', 0.25); },
+    net() { play(150, 0.15, 'sawtooth', 0.2); },
+    score() { play(880, 0.12, 'square', 0.4); setTimeout(() => play(1100, 0.15, 'square', 0.35), 80); },
+    lose() { play(200, 0.3, 'sawtooth', 0.35); setTimeout(() => play(150, 0.35, 'sawtooth', 0.25), 120); },
+    win() { play(660, 0.1, 'square', 0.35); setTimeout(() => play(880, 0.1, 'square', 0.35), 80); setTimeout(() => play(1100, 0.12, 'square', 0.4), 160); },
+    serve() { play(440, 0.08, 'triangle', 0.3); },
+    upgrade() { play(523, 0.08, 'square', 0.3); setTimeout(() => play(659, 0.08, 'square', 0.3), 70); setTimeout(() => play(784, 0.12, 'square', 0.35), 140); },
+    slowmo() { play(180, 0.5, 'sine', 0.2); },
+    swing() { play(300, 0.04, 'sawtooth', 0.15); }
   };
 })();
 
 // ============================================================
-// MATCH LOGIC
+// MATCH STATE
+// Ball: 3D position (x across court, y up, z depth along court)
+// Player at z~0.5, opponent at z~12.9
 // ============================================================
-function createMatch(opponent, stats, roundIdx) {
+const WIN_SCORE_BASE = 5;
+const GRAVITY = 9.8;
+const BALL_SPEED_BASE = 9; // m/s base shot speed
+const SERVE_SPEED = 7;
+
+function createMatch(opp, stats, roundIdx) {
   const winScore = WIN_SCORE_BASE + Math.floor(roundIdx / 3);
-  const loseScore = winScore + stats.bonusHP;
-
   return {
-    opp: opponent,
-    stats: stats,
-    winScore: winScore,
-    loseScore: loseScore,
-    p1Score: 0,
-    p2Score: 0,
-    serving: 'p1', // p1 = player
+    opp, stats, winScore,
+    loseScore: winScore + stats.bonusHP,
+    p1Score: 0, p2Score: 0,
 
-    // Paddles
-    p1: { x: PLAY_L + 20, y: COURT_H / 2, w: PADDLE_W, h: PADDLE_H_BASE * stats.paddleMult, speed: 300 * stats.speedMult },
-    p2: { x: PLAY_R - 20, y: COURT_H / 2, w: PADDLE_W, h: opponent.paddleH, speed: opponent.speed * stats.oppDebuff, targetY: COURT_H / 2, reactionTimer: 0, lastBallY: COURT_H / 2 },
+    // Player position (x lateral on near side)
+    player: { x: 0, z: 0.5, reachR: 0.9 * stats.reachMult, speed: 4.5 * stats.speedMult },
 
-    // Ball
-    ball: { x: 0, y: 0, vx: 0, vy: 0, speed: 0, spin: 0, active: false, trail: [], ghost: 0 },
+    // Opponent position (x lateral on far side)
+    enemy: { x: 0, z: CL - 0.5, targetX: 0, reactionTimer: 0, reachR: opp.reachRadius * (opp.accuracy * 0.5 + 0.7), speed: opp.speed * stats.oppDebuff, swingAnim: 0 },
 
-    // Serve state
-    serveTimer: 0,
+    // Ball 3D
+    ball: {
+      x: 0, y: 1.0, z: 1.0,
+      vx: 0, vy: 0, vz: 0,
+      active: false, bounced: false, // must bounce once per side in pickleball
+      lastHitBy: 'none', // 'p1' or 'p2'
+      trail: [], ghost: 1, spin: 0
+    },
+
+    // Serve
+    serving: 'p1',
+    serveTimer: 1.0,
     serveReady: false,
+    autoServeTimer: 0,
 
     // Slow-mo
     slowmoCharge: stats.hasSlowmo ? stats.slowmoMax : 0,
     slowmoActive: false,
     slowmoMax: stats.slowmoMax,
 
-    // Particles
+    // Particles (3D)
     particles: [],
 
     // Point flash
-    pointFlash: 0,
-    pointText: '',
+    pointFlash: 0, pointText: '',
 
-    // Rally count
+    // Rally
     rallyCount: 0,
 
-    // AI state
-    aiState: { anticipateY: COURT_H / 2, moving: false }
+    // Player swing animation
+    playerSwingAnim: 0,
+
+    // State: 'serving', 'play', 'point-pause'
+    playState: 'serving'
   };
 }
 
 function resetBall(m) {
   const isP1 = m.serving === 'p1';
-  m.ball.x = isP1 ? m.p1.x + PADDLE_W + BALL_R + 2 : m.p2.x - PADDLE_W - BALL_R - 2;
-  m.ball.y = isP1 ? m.p1.y : m.p2.y;
-  m.ball.vx = 0; m.ball.vy = 0; m.ball.speed = 0; m.ball.spin = 0;
-  m.ball.active = false; m.ball.trail = []; m.ball.ghost = 0;
+  m.ball.x = isP1 ? m.player.x : m.enemy.x;
+  m.ball.y = 1.0;
+  m.ball.z = isP1 ? 1.5 : CL - 1.5;
+  m.ball.vx = 0; m.ball.vy = 0; m.ball.vz = 0;
+  m.ball.active = false; m.ball.bounced = false;
+  m.ball.lastHitBy = 'none'; m.ball.trail = []; m.ball.spin = 0;
   m.serveTimer = 0.8;
   m.serveReady = false;
+  m.autoServeTimer = 0;
   m.rallyCount = 0;
+  m.playState = 'serving';
 }
 
 function serveBall(m) {
-  const isP1Serve = m.serving === 'p1';
-  const dir = isP1Serve ? 1 : -1;
-  const speed = SERVE_SPEED * (isP1Serve ? m.stats.serveMult : 1);
-  const angle = (Math.random() - 0.5) * 0.5;
-  m.ball.vx = dir * speed * Math.cos(angle);
-  m.ball.vy = speed * Math.sin(angle) * 0.6;
-  m.ball.speed = speed;
+  const isP1 = m.serving === 'p1';
+  const speed = SERVE_SPEED * (isP1 ? m.stats.serveMult : 1);
+  const dir = isP1 ? 1 : -1;
+  // Serve diagonally across the court
+  const lateralAim = (Math.random() - 0.5) * 1.5;
+  m.ball.x = isP1 ? m.player.x : m.enemy.x;
+  m.ball.y = 1.3;
+  m.ball.z = isP1 ? 1.5 : CL - 1.5;
+  m.ball.vx = lateralAim;
+  m.ball.vy = 2.5; // slight arc up
+  m.ball.vz = dir * speed;
   m.ball.active = true;
+  m.ball.bounced = false;
+  m.ball.lastHitBy = isP1 ? 'p1' : 'p2';
   m.ball.spin = 0;
-  Audio.serve();
+  m.playState = 'play';
+  Sfx.serve();
 }
 
+// ============================================================
+// PHYSICS
+// ============================================================
 function updateMatch(m, dt) {
-  if (m.pointFlash > 0) { m.pointFlash -= dt; return; }
+  if (m.playState === 'point-pause') {
+    m.pointFlash -= dt;
+    if (m.pointFlash <= 0) m.pointFlash = 0;
+    updateParticles(m, dt);
+    return;
+  }
 
-  // Time scale for slow-mo
+  // Slow-mo
   let timeScale = 1;
   if (m.slowmoActive && m.slowmoCharge > 0) {
-    timeScale = 0.35;
+    timeScale = 0.3;
     m.slowmoCharge -= dt;
     if (m.slowmoCharge <= 0) { m.slowmoCharge = 0; m.slowmoActive = false; }
   } else if (m.stats.hasSlowmo && !m.slowmoActive && m.slowmoCharge < m.slowmoMax) {
-    m.slowmoCharge += dt * 0.5; // recharge slowly
+    m.slowmoCharge += dt * 0.4;
     if (m.slowmoCharge > m.slowmoMax) m.slowmoCharge = m.slowmoMax;
   }
-  const sDt = dt * timeScale;
-
-  // Update slow-mo UI
   if (m.stats.hasSlowmo) {
     slowmoBar.style.display = 'block';
     document.getElementById('slowmoFill').style.width = ((m.slowmoCharge / m.slowmoMax) * 100) + '%';
   }
+  const sDt = dt * timeScale;
 
-  // Serve timer
-  if (!m.ball.active) {
+  // Serve logic
+  if (m.playState === 'serving') {
     m.serveTimer -= sDt;
     if (m.serveTimer <= 0 && !m.serveReady) {
       m.serveReady = true;
-      if (m.serving !== 'p1') {
-        // AI serves after a short delay
-        setTimeout(() => { if (m.serveReady && !m.ball.active) serveBall(m); }, 300 + Math.random() * 400);
+      m.autoServeTimer = 0;
+    }
+    if (m.serveReady) {
+      if (m.serving === 'p1') {
+        m.autoServeTimer += sDt;
+        // Auto-serve on click or after 2s
+        if (mouseClicked || m.autoServeTimer > 2.0) {
+          mouseClicked = false;
+          serveBall(m);
+        }
+      } else {
+        m.autoServeTimer += sDt;
+        if (m.autoServeTimer > 0.4 + Math.random() * 0.3) {
+          serveBall(m);
+        }
       }
     }
-    // Player serves by being near ball position (auto-serve after delay)
-    if (m.serveReady && m.serving === 'p1') {
-      m.serveTimer -= sDt;
-      if (m.serveTimer <= -0.5) serveBall(m); // auto-serve after 1.3s total
-    }
   }
 
-  // Move player paddle
-  const targetY = mouseY;
-  const diff = targetY - m.p1.y;
-  const maxMove = m.p1.speed * sDt;
-  m.p1.y += Math.sign(diff) * Math.min(Math.abs(diff), maxMove);
-  m.p1.y = clamp(m.p1.y, PLAY_T + m.p1.h / 2, PLAY_B - m.p1.h / 2);
-
-  // AI paddle
-  updateAI(m, sDt);
-
-  if (!m.ball.active) return;
-
-  // Ball magnet effect
-  if (m.stats.magnetStr > 0 && m.ball.vx < 0) {
-    const dy = m.p1.y - m.ball.y;
-    m.ball.vy += Math.sign(dy) * m.stats.magnetStr * sDt;
+  // Player movement: mouse X maps to court lateral position
+  {
+    const targetX = ((mouseX / VW) - 0.5) * CW * 1.2;
+    const diff = targetX - m.player.x;
+    const maxMove = m.player.speed * sDt;
+    m.player.x += Math.sign(diff) * Math.min(Math.abs(diff), maxMove);
+    m.player.x = clamp(m.player.x, -CW / 2, CW / 2);
   }
 
-  // Move ball
+  // Opponent AI
+  updateEnemyAI(m, sDt);
+
+  // Swing anims
+  if (m.playerSwingAnim > 0) m.playerSwingAnim -= sDt * 4;
+  if (m.enemy.swingAnim > 0) m.enemy.swingAnim -= sDt * 4;
+
+  if (!m.ball.active) { updateParticles(m, sDt); return; }
+
+  // Ball physics
+  m.ball.vy -= GRAVITY * sDt;
+  // Apply spin as lateral curve
+  m.ball.vx += m.ball.spin * 3 * sDt;
+  m.ball.spin *= (1 - 1.5 * sDt);
+
   m.ball.x += m.ball.vx * sDt;
   m.ball.y += m.ball.vy * sDt;
-  // Apply spin as curve
-  m.ball.vy += m.ball.spin * 200 * sDt;
-  m.ball.spin *= (1 - 2 * sDt); // decay spin
+  m.ball.z += m.ball.vz * sDt;
 
-  // Ghost ball flicker
-  if (m.stats.ghostBall) {
-    m.ball.ghost = Math.sin(clock * 15) > 0.3 ? 1 : 0.15;
-  } else {
-    m.ball.ghost = 1;
-  }
+  // Ghost ball flicker (opponent sees it flickering, visually we show it)
+  m.ball.ghost = m.stats.ghostBall ? (Math.sin(clock * 18) > 0.2 ? 1 : 0.2) : 1;
 
   // Trail
-  m.ball.trail.push({ x: m.ball.x, y: m.ball.y, t: 1 });
-  if (m.ball.trail.length > 12) m.ball.trail.shift();
-  for (const t of m.ball.trail) t.t -= sDt * 5;
+  m.ball.trail.push({ x: m.ball.x, y: m.ball.y, z: m.ball.z, t: 1 });
+  if (m.ball.trail.length > 15) m.ball.trail.shift();
+  for (const tr of m.ball.trail) tr.t -= sDt * 4;
 
-  // Wall bounce (top/bottom)
-  if (m.ball.y - BALL_R <= PLAY_T) { m.ball.y = PLAY_T + BALL_R; m.ball.vy = Math.abs(m.ball.vy); Audio.wall(); }
-  if (m.ball.y + BALL_R >= PLAY_B) { m.ball.y = PLAY_B - BALL_R; m.ball.vy = -Math.abs(m.ball.vy); Audio.wall(); }
-
-  // Paddle collision - Player (left)
-  if (m.ball.vx < 0 && m.ball.x - BALL_R <= m.p1.x + m.p1.w / 2 && m.ball.x + BALL_R >= m.p1.x - m.p1.w / 2) {
-    if (m.ball.y >= m.p1.y - m.p1.h / 2 && m.ball.y <= m.p1.y + m.p1.h / 2) {
-      paddleHit(m, m.p1, true);
+  // Ground bounce
+  if (m.ball.y <= BALL_RADIUS) {
+    m.ball.y = BALL_RADIUS;
+    if (!m.ball.bounced) {
+      m.ball.bounced = true;
+      m.ball.vy = Math.abs(m.ball.vy) * 0.55; // damped bounce
+      Sfx.bounce();
+      spawnParticles(m, m.ball.x, 0.05, m.ball.z, 4, '#86efac');
+    } else {
+      // Second bounce = point!
+      m.ball.vy = Math.abs(m.ball.vy) * 0.3;
+      Sfx.bounce();
+      // Determine who scores
+      if (m.ball.z > NET_Z) {
+        // Bounced on opponent's side twice = player scores
+        scorePoint(m, 'p1');
+      } else {
+        // Bounced on player's side twice = opponent scores
+        scorePoint(m, 'p2');
+      }
+      updateParticles(m, sDt);
+      return;
     }
   }
 
-  // Paddle collision - AI (right)
-  if (m.ball.vx > 0 && m.ball.x + BALL_R >= m.p2.x - m.p2.w / 2 && m.ball.x - BALL_R <= m.p2.x + m.p2.w / 2) {
-    if (m.ball.y >= m.p2.y - m.p2.h / 2 && m.ball.y <= m.p2.y + m.p2.h / 2) {
-      paddleHit(m, m.p2, false);
+  // Side walls (out of bounds laterally)
+  if (Math.abs(m.ball.x) > CW / 2 + 0.5) {
+    // Out of bounds - point for the other side
+    if (m.ball.lastHitBy === 'p1') { scorePoint(m, 'p2'); }
+    else { scorePoint(m, 'p1'); }
+    updateParticles(m, sDt);
+    return;
+  }
+
+  // Out of bounds depth (past baseline)
+  if (m.ball.z < -0.5) {
+    scorePoint(m, 'p2');
+    updateParticles(m, sDt);
+    return;
+  }
+  if (m.ball.z > CL + 0.5) {
+    scorePoint(m, 'p1');
+    updateParticles(m, sDt);
+    return;
+  }
+
+  // Net collision: ball crossing net plane
+  if (m.ball.vz > 0 && m.ball.z >= NET_Z - 0.05 && m.ball.z <= NET_Z + 0.15 && m.ball.y < NET_H) {
+    // Hit the net going forward
+    m.ball.vz *= -0.3;
+    m.ball.vy = Math.abs(m.ball.vy) * 0.2 + 0.5;
+    m.ball.z = NET_Z - 0.06;
+    Sfx.net();
+    spawnParticles(m, m.ball.x, m.ball.y, NET_Z, 6, '#ccccaa');
+  }
+  if (m.ball.vz < 0 && m.ball.z <= NET_Z + 0.05 && m.ball.z >= NET_Z - 0.15 && m.ball.y < NET_H) {
+    m.ball.vz *= -0.3;
+    m.ball.vy = Math.abs(m.ball.vy) * 0.2 + 0.5;
+    m.ball.z = NET_Z + 0.06;
+    Sfx.net();
+    spawnParticles(m, m.ball.x, m.ball.y, NET_Z, 6, '#ccccaa');
+  }
+
+  // Player hit: ball is on player's side, moving toward player, close enough
+  if (m.ball.lastHitBy !== 'p1' && m.ball.z < NET_Z && m.ball.z < 3.0 && m.ball.y < 2.0) {
+    const dx = m.ball.x - m.player.x;
+    const dz = m.ball.z - m.player.z;
+    const dist = Math.sqrt(dx * dx + dz * dz);
+    // Auto-hit if close, or click-hit with larger radius
+    const hitR = m.player.reachR * (mouseClicked ? 1.3 : 0.95);
+    if (dist < hitR && m.ball.y < 1.8) {
+      playerHit(m);
+      mouseClicked = false;
     }
   }
 
-  // Scoring
-  if (m.ball.x < PLAY_L - 10) { scorePoint(m, 'p2'); }
-  if (m.ball.x > PLAY_R + 10) { scorePoint(m, 'p1'); }
+  // Enemy hit: ball on opponent's side
+  if (m.ball.lastHitBy !== 'p2' && m.ball.z > NET_Z && m.ball.z > CL - 3.5 && m.ball.y < 2.0) {
+    const dx = m.ball.x - m.enemy.x;
+    const dz = m.ball.z - m.enemy.z;
+    const dist = Math.sqrt(dx * dx + dz * dz);
+    if (dist < m.enemy.reachR && m.ball.y < 1.8) {
+      enemyHit(m);
+    }
+  }
 
-  // Particles
+  // Air drag (very slight)
+  const spd = Math.sqrt(m.ball.vx * m.ball.vx + m.ball.vy * m.ball.vy + m.ball.vz * m.ball.vz);
+  if (spd > 0.1) {
+    const drag = 0.015 * spd;
+    const ratio = Math.max(0, 1 - drag * sDt);
+    m.ball.vx *= ratio; m.ball.vz *= ratio;
+  }
+
+  updateParticles(m, sDt);
+}
+
+function playerHit(m) {
+  m.playerSwingAnim = 1;
+  m.ball.lastHitBy = 'p1';
+  m.ball.bounced = false;
+  m.rallyCount++;
+  Sfx.hit();
+
+  // Aim: mouse Y determines depth (high mouse = deep shot, low = drop shot near net)
+  const aimDepth = 1 - clamp(mouseY / VH, 0, 1); // 0=short, 1=deep
+  const targetZ = NET_Z + 1.5 + aimDepth * (CL - NET_Z - 3);
+  // Lateral aim: where mouse is relative to center
+  const aimLateral = ((mouseX / VW) - 0.5) * m.stats.aimMult;
+  const targetX = aimLateral * CW * 0.8;
+
+  const speed = BALL_SPEED_BASE * m.stats.powerMult * (0.9 + m.rallyCount * 0.015);
+  const dx = targetX - m.ball.x;
+  const dz = targetZ - m.ball.z;
+  const dist = Math.sqrt(dx * dx + dz * dz);
+  const arc = 2.5 + (1 - aimDepth) * 2.0; // higher arc for drop shots
+
+  m.ball.vx = (dx / dist) * speed * 0.35;
+  m.ball.vz = (dz / dist) * speed;
+  m.ball.vy = arc;
+
+  // Apply spin upgrade
+  if (m.stats.spinPower > 0) {
+    m.ball.spin = aimLateral * m.stats.spinPower * 2;
+  }
+
+  spawnParticles(m, m.ball.x, m.ball.y, m.ball.z, 5, '#49d0ff');
+}
+
+function enemyHit(m) {
+  m.enemy.swingAnim = 1;
+  m.ball.lastHitBy = 'p2';
+  m.ball.bounced = false;
+  m.rallyCount++;
+  Sfx.hit();
+
+  const opp = m.opp;
+  // AI aim: target a spot on player's side
+  const targetZ = 0.5 + Math.random() * (NET_Z - KITCHEN_D - 1);
+  const targetX = (Math.random() - 0.5) * CW * opp.accuracy;
+  const speed = BALL_SPEED_BASE * (0.8 + opp.aggression * 0.4) * (0.9 + m.rallyCount * 0.01);
+
+  const dx = targetX - m.ball.x;
+  const dz = targetZ - m.ball.z;
+  const dist = Math.sqrt(dx * dx + dz * dz);
+  const arc = 2.0 + Math.random() * 2.0;
+
+  m.ball.vx = (dx / dist) * speed * 0.35;
+  m.ball.vz = (dz / dist) * speed * -1; // toward player
+  m.ball.vy = arc;
+
+  if (opp.spinSkill > 0.3) {
+    m.ball.spin = (Math.random() - 0.5) * opp.spinSkill;
+  }
+
+  // Ghost ball debuff: AI sometimes misjudges
+  if (m.stats.ghostBall && Math.random() < 0.15) {
+    m.ball.vx += (Math.random() - 0.5) * 2;
+  }
+
+  spawnParticles(m, m.ball.x, m.ball.y, m.ball.z, 5, m.opp.color);
+}
+
+function updateEnemyAI(m, dt) {
+  const opp = m.opp;
+  const e = m.enemy;
+
+  let targetX = 0;
+  if (m.ball.active && m.ball.vz > 0) {
+    // Ball coming toward opponent - predict landing
+    const timeToArrive = Math.max(0.1, (e.z - m.ball.z) / Math.max(0.1, m.ball.vz));
+    targetX = m.ball.x + m.ball.vx * timeToArrive;
+    targetX += (Math.random() - 0.5) * (1 - opp.accuracy) * 2.5;
+  } else if (m.ball.active && m.ball.vz < 0) {
+    // Ball going away - return to center
+    targetX = (Math.random() - 0.5) * 1.0;
+  }
+
+  e.reactionTimer -= dt;
+  if (e.reactionTimer <= 0) {
+    e.targetX = targetX;
+    e.reactionTimer = opp.reaction * (0.7 + Math.random() * 0.6);
+  }
+
+  const diff = e.targetX - e.x;
+  const maxMove = e.speed * dt;
+  e.x += Math.sign(diff) * Math.min(Math.abs(diff), maxMove);
+  e.x = clamp(e.x, -CW / 2, CW / 2);
+}
+
+// ============================================================
+// PARTICLES (3D)
+// ============================================================
+function spawnParticles(m, x, y, z, count, color) {
+  for (let i = 0; i < count; i++) {
+    m.particles.push({
+      x, y: y + 0.05, z,
+      vx: (Math.random() - 0.5) * 2,
+      vy: Math.random() * 2 + 0.5,
+      vz: (Math.random() - 0.5) * 2,
+      life: 0.3 + Math.random() * 0.3,
+      color
+    });
+  }
+}
+
+function updateParticles(m, dt) {
   for (let i = m.particles.length - 1; i >= 0; i--) {
     const p = m.particles[i];
-    p.x += p.vx * sDt; p.y += p.vy * sDt;
-    p.life -= sDt;
+    p.x += p.vx * dt; p.y += p.vy * dt; p.z += p.vz * dt;
+    p.vy -= 6 * dt;
+    p.life -= dt;
     if (p.life <= 0) m.particles.splice(i, 1);
   }
 }
 
-function paddleHit(m, paddle, isPlayer) {
-  const relY = (m.ball.y - paddle.y) / (paddle.h / 2); // -1 to 1
-  const maxAngle = 60 * Math.PI / 180;
-  let angle = relY * maxAngle * (isPlayer ? m.stats.precisionMult : 1);
-
-  const speedBoost = isPlayer ? m.stats.powerMult : 1;
-  const rallyBoost = 1 + m.rallyCount * 0.02; // gets faster each rally
-  const newSpeed = Math.min(BALL_SPEED_BASE * speedBoost * rallyBoost * (1 + Math.random() * 0.1), 600);
-
-  const dir = isPlayer ? 1 : -1;
-  m.ball.vx = dir * newSpeed * Math.cos(angle);
-  m.ball.vy = newSpeed * Math.sin(angle);
-  m.ball.speed = newSpeed;
-  m.ball.x = paddle.x + (isPlayer ? paddle.w / 2 + BALL_R + 1 : -paddle.w / 2 - BALL_R - 1);
-
-  // Add spin if player has spin upgrade
-  if (isPlayer && m.stats.spinPower > 0) {
-    m.ball.spin = relY * m.stats.spinPower;
-  }
-  // AI spin
-  if (!isPlayer && m.opp.spinSkill > 0.3) {
-    m.ball.spin = (Math.random() - 0.5) * m.opp.spinSkill * 0.5;
-  }
-
-  m.rallyCount++;
-  Audio.hit();
-
-  // Hit particles
-  for (let i = 0; i < 6; i++) {
-    m.particles.push({
-      x: m.ball.x, y: m.ball.y,
-      vx: (Math.random() - 0.5) * 100 * dir,
-      vy: (Math.random() - 0.5) * 80,
-      life: 0.3 + Math.random() * 0.2,
-      color: isPlayer ? 'var(--p1)' : m.opp.color
-    });
-  }
-}
-
+// ============================================================
+// SCORING
+// ============================================================
 function scorePoint(m, who) {
   m.ball.active = false;
+  m.playState = 'point-pause';
   if (who === 'p1') {
     m.p1Score++;
     m.pointText = 'POINT!';
-    Audio.score();
+    Sfx.score();
   } else {
     m.p2Score++;
-    m.pointText = 'OPPONENT SCORES';
-    Audio.lose();
+    m.pointText = 'FAULT';
+    Sfx.lose();
   }
-  m.pointFlash = 1.0;
+  m.pointFlash = 1.5;
   document.getElementById('scoreP1').textContent = m.p1Score;
   document.getElementById('scoreP2').textContent = m.p2Score;
 
-  // Score particles
-  for (let i = 0; i < 12; i++) {
-    m.particles.push({
-      x: who === 'p1' ? PLAY_R : PLAY_L, y: m.ball.y,
-      vx: (Math.random() - 0.5) * 150, vy: (Math.random() - 0.5) * 150,
-      life: 0.5 + Math.random() * 0.3,
-      color: who === 'p1' ? '#49d0ff' : '#ff6b4a'
-    });
-  }
+  spawnParticles(m, m.ball.x, m.ball.y, m.ball.z, 10, who === 'p1' ? '#49d0ff' : '#ff6b4a');
 
-  // Check match end
   if (m.p1Score >= m.winScore) {
-    setTimeout(() => endMatch(true), 800);
+    setTimeout(() => endMatch(true), 1200);
     return;
   }
   if (m.p2Score >= m.loseScore) {
-    setTimeout(() => endMatch(false), 800);
+    setTimeout(() => endMatch(false), 1200);
     return;
   }
 
-  // Alternate serve
   m.serving = m.serving === 'p1' ? 'p2' : 'p1';
   document.getElementById('hudServe').textContent = m.serving === 'p1' ? 'YOU' : 'OPP';
-  setTimeout(() => resetBall(m), 600);
+  setTimeout(() => resetBall(m), 1000);
 }
 
 // ============================================================
-// AI
-// ============================================================
-function updateAI(m, dt) {
-  const opp = m.opp;
-  const p2 = m.p2;
-
-  // Predict where ball will be
-  let targetY = COURT_H / 2;
-  if (m.ball.active && m.ball.vx > 0) {
-    // Simple prediction: where will ball be at paddle x?
-    const timeToReach = (p2.x - m.ball.x) / Math.max(1, m.ball.vx);
-    targetY = m.ball.y + m.ball.vy * timeToReach;
-    // Bounce prediction (simple)
-    while (targetY < PLAY_T || targetY > PLAY_B) {
-      if (targetY < PLAY_T) targetY = 2 * PLAY_T - targetY;
-      if (targetY > PLAY_B) targetY = 2 * PLAY_B - targetY;
-    }
-    // Add inaccuracy
-    targetY += (Math.random() - 0.5) * (1 - opp.accuracy) * 80;
-  } else if (m.ball.active && m.ball.vx < 0) {
-    // Return to center-ish while ball heading away
-    targetY = COURT_H / 2 + (Math.random() - 0.5) * 40;
-  }
-
-  // Reaction delay
-  p2.reactionTimer -= dt;
-  if (p2.reactionTimer <= 0) {
-    p2.targetY = targetY;
-    p2.reactionTimer = opp.reaction * (0.8 + Math.random() * 0.4);
-  }
-
-  // Move toward target
-  const diff = p2.targetY - p2.y;
-  const maxMove = p2.speed * dt;
-  p2.y += Math.sign(diff) * Math.min(Math.abs(diff), maxMove);
-  p2.y = clamp(p2.y, PLAY_T + p2.h / 2, PLAY_B - p2.h / 2);
-}
-
-// ============================================================
-// MATCH FLOW
-// ============================================================
-function endMatch(won) {
-  gamePhase = 'match-over';
-  if (won) {
-    run.bracket[run.currentRound] = 'won';
-    Audio.win();
-    showMatchResult('YOU WIN!', true);
-    setTimeout(() => {
-      matchResult.style.display = 'none';
-      run.currentRound++;
-      if (run.currentRound >= 7) {
-        // Champion!
-        showChampion();
-      } else {
-        showUpgradeScreen();
-      }
-    }, 1800);
-  } else {
-    run.bracket[run.currentRound] = 'lost';
-    Audio.lose();
-    showMatchResult('DEFEATED', false);
-    setTimeout(() => {
-      matchResult.style.display = 'none';
-      showGameOver();
-    }, 2000);
-  }
-}
-
-function showMatchResult(text, isWin) {
-  const el = document.getElementById('resultText');
-  el.textContent = text;
-  el.className = 'result-text ' + (isWin ? 'win-text' : 'lose-text');
-  matchResult.style.display = 'grid';
-}
-
-// ============================================================
-// RENDERING
+// RENDERING - First Person 3D
 // ============================================================
 function drawGame(m) {
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-  // Scale to virtual coordinates
   ctx.save();
-  ctx.scale(canvas.width / COURT_W, canvas.height / COURT_H);
+  ctx.scale(canvas.width / VW, canvas.height / VH);
 
-  // Background
-  ctx.fillStyle = '#0d1117';
-  ctx.fillRect(0, 0, COURT_W, COURT_H);
+  // Sky gradient
+  const skyGrad = ctx.createLinearGradient(0, 0, 0, VH * 0.5);
+  skyGrad.addColorStop(0, '#0a0e1a');
+  skyGrad.addColorStop(1, '#1a2040');
+  ctx.fillStyle = skyGrad;
+  ctx.fillRect(0, 0, VW, VH);
 
-  // Court surface
-  const courtGrad = ctx.createLinearGradient(0, PLAY_T, 0, PLAY_B);
-  courtGrad.addColorStop(0, '#0f2a0f');
-  courtGrad.addColorStop(0.5, '#1a3a1a');
-  courtGrad.addColorStop(1, '#0f2a0f');
-  ctx.fillStyle = courtGrad;
-  ctx.fillRect(PLAY_L, PLAY_T, PLAY_R - PLAY_L, PLAY_B - PLAY_T);
-
-  // Court lines
-  ctx.strokeStyle = 'rgba(232,232,208,0.3)';
-  ctx.lineWidth = 1;
-  // Outer boundary
-  ctx.strokeRect(PLAY_L, PLAY_T, PLAY_R - PLAY_L, PLAY_B - PLAY_T);
-  // Center line
-  ctx.beginPath();
-  ctx.setLineDash([4, 4]);
-  ctx.moveTo(NET_X, PLAY_T); ctx.lineTo(NET_X, PLAY_B);
-  ctx.stroke();
-  ctx.setLineDash([]);
-
-  // Kitchen zones (no-volley zone)
-  ctx.fillStyle = 'rgba(255,138,61,0.06)';
-  ctx.fillRect(NET_X - KITCHEN_W, PLAY_T, KITCHEN_W, PLAY_B - PLAY_T);
-  ctx.fillRect(NET_X, PLAY_T, KITCHEN_W, PLAY_B - PLAY_T);
-  ctx.strokeStyle = 'rgba(255,138,61,0.2)';
-  ctx.setLineDash([3, 3]);
-  ctx.beginPath();
-  ctx.moveTo(NET_X - KITCHEN_W, PLAY_T); ctx.lineTo(NET_X - KITCHEN_W, PLAY_B);
-  ctx.moveTo(NET_X + KITCHEN_W, PLAY_T); ctx.lineTo(NET_X + KITCHEN_W, PLAY_B);
-  ctx.stroke();
-  ctx.setLineDash([]);
-
-  // Net
-  ctx.strokeStyle = 'rgba(200,200,170,0.6)';
-  ctx.lineWidth = 2;
-  ctx.beginPath(); ctx.moveTo(NET_X, PLAY_T); ctx.lineTo(NET_X, PLAY_B); ctx.stroke();
-  // Net diamonds
-  ctx.strokeStyle = 'rgba(200,200,170,0.15)';
-  ctx.lineWidth = 0.5;
-  for (let y = PLAY_T; y < PLAY_B; y += 12) {
-    ctx.beginPath(); ctx.moveTo(NET_X - 3, y); ctx.lineTo(NET_X, y + 6); ctx.lineTo(NET_X + 3, y); ctx.stroke();
+  // Ground plane
+  const horizon = project(0, 0, 100);
+  if (horizon) {
+    const grd = ctx.createLinearGradient(0, horizon.y, 0, VH);
+    grd.addColorStop(0, '#0a2a0a');
+    grd.addColorStop(1, '#061206');
+    ctx.fillStyle = grd;
+    ctx.fillRect(0, horizon.y, VW, VH - horizon.y);
   }
 
-  if (!m) { ctx.restore(); return; }
+  // Draw court surface
+  drawCourtSurface();
 
-  // Slow-mo tint
-  if (m.slowmoActive && m.slowmoCharge > 0) {
-    ctx.fillStyle = 'rgba(73,208,255,0.04)';
-    ctx.fillRect(0, 0, COURT_W, COURT_H);
+  // Draw net
+  drawNet();
+
+  // Draw opponent
+  if (m) drawOpponent(m);
+
+  // Draw ball shadow
+  if (m && m.ball.active) {
+    drawBallShadow(m);
   }
 
-  // Ball trail
-  for (const t of m.ball.trail) {
-    if (t.t <= 0) continue;
-    ctx.globalAlpha = t.t * 0.3 * m.ball.ghost;
-    ctx.fillStyle = '#ffe033';
-    ctx.beginPath(); ctx.arc(t.x, t.y, BALL_R * t.t * 0.7, 0, Math.PI * 2); ctx.fill();
-  }
-  ctx.globalAlpha = 1;
-
-  // Ball
-  if (m.ball.active || m.serveReady) {
-    ctx.globalAlpha = m.ball.ghost;
-    // Ball glow
-    ctx.shadowColor = '#ffe033';
-    ctx.shadowBlur = 8;
-    ctx.fillStyle = '#ffe033';
-    ctx.beginPath(); ctx.arc(m.ball.x, m.ball.y, BALL_R, 0, Math.PI * 2); ctx.fill();
-    // Ball holes (wiffle ball look)
-    ctx.shadowBlur = 0;
-    ctx.fillStyle = 'rgba(200,170,0,0.5)';
-    for (let a = 0; a < 4; a++) {
-      const ang = a * Math.PI / 2 + clock * 3;
-      ctx.beginPath(); ctx.arc(m.ball.x + Math.cos(ang) * 2.5, m.ball.y + Math.sin(ang) * 2.5, 1, 0, Math.PI * 2); ctx.fill();
+  // Draw ball trail
+  if (m) {
+    for (const tr of m.ball.trail) {
+      if (tr.t <= 0) continue;
+      const p = project(tr.x, tr.y, tr.z);
+      if (!p) continue;
+      ctx.globalAlpha = tr.t * 0.25 * (m.ball.ghost || 1);
+      ctx.fillStyle = '#ffe033';
+      const r = Math.max(1, 4 * p.scale * tr.t);
+      ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI * 2); ctx.fill();
     }
     ctx.globalAlpha = 1;
   }
 
-  // Player paddle
-  ctx.shadowColor = '#49d0ff';
-  ctx.shadowBlur = 6;
-  drawPaddle(m.p1.x, m.p1.y, m.p1.w, m.p1.h, '#49d0ff');
-  ctx.shadowBlur = 0;
+  // Draw ball
+  if (m && (m.ball.active || m.serveReady)) {
+    const bp = project(m.ball.x, m.ball.y, m.ball.z);
+    if (bp) {
+      const br = Math.max(2, BALL_RADIUS * 12 * bp.scale);
+      ctx.globalAlpha = m.ball.ghost;
+      // Glow
+      ctx.shadowColor = '#ffe033';
+      ctx.shadowBlur = 12;
+      ctx.fillStyle = '#ffe033';
+      ctx.beginPath(); ctx.arc(bp.x, bp.y, br, 0, Math.PI * 2); ctx.fill();
+      ctx.shadowBlur = 0;
+      // Holes
+      ctx.fillStyle = 'rgba(180,150,0,0.5)';
+      for (let a = 0; a < 4; a++) {
+        const ang = a * Math.PI / 2 + clock * 4;
+        ctx.beginPath(); ctx.arc(bp.x + Math.cos(ang) * br * 0.5, bp.y + Math.sin(ang) * br * 0.5, br * 0.15, 0, Math.PI * 2); ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+    }
+  }
 
-  // AI paddle
-  ctx.shadowColor = m.opp.color;
-  ctx.shadowBlur = 6;
-  drawPaddle(m.p2.x, m.p2.y, m.p2.w, m.p2.h, m.opp.color);
-  ctx.shadowBlur = 0;
+  // Draw player paddle (first person, at bottom of screen)
+  if (m) drawPlayerPaddle(m);
 
   // Particles
-  for (const p of m.particles) {
-    ctx.globalAlpha = clamp(p.life / 0.3, 0, 1);
-    ctx.fillStyle = p.color;
-    ctx.fillRect(p.x - 2, p.y - 2, 4, 4);
+  if (m) {
+    for (const p of m.particles) {
+      const pp = project(p.x, p.y, p.z);
+      if (!pp) continue;
+      ctx.globalAlpha = clamp(p.life / 0.3, 0, 1);
+      ctx.fillStyle = p.color;
+      const sz = Math.max(1, 3 * pp.scale);
+      ctx.fillRect(pp.x - sz / 2, pp.y - sz / 2, sz, sz);
+    }
+    ctx.globalAlpha = 1;
   }
-  ctx.globalAlpha = 1;
+
+  // Slow-mo tint
+  if (m && m.slowmoActive && m.slowmoCharge > 0) {
+    ctx.fillStyle = 'rgba(73,208,255,0.06)';
+    ctx.fillRect(0, 0, VW, VH);
+  }
+
+  // Vignette
+  const vig = ctx.createRadialGradient(VW / 2, VH / 2, VW * 0.2, VW / 2, VH / 2, VW * 0.7);
+  vig.addColorStop(0, 'rgba(0,0,0,0)');
+  vig.addColorStop(1, 'rgba(0,0,0,0.4)');
+  ctx.fillStyle = vig;
+  ctx.fillRect(0, 0, VW, VH);
 
   // Point flash text
-  if (m.pointFlash > 0) {
-    ctx.globalAlpha = Math.min(1, m.pointFlash * 2);
+  if (m && m.pointFlash > 0) {
+    ctx.globalAlpha = Math.min(1, m.pointFlash);
     ctx.fillStyle = m.pointText === 'POINT!' ? '#49d0ff' : '#ff6b4a';
-    ctx.font = 'bold 28px monospace';
+    ctx.font = 'bold 40px monospace';
     ctx.textAlign = 'center';
-    ctx.fillText(m.pointText, COURT_W / 2, COURT_H / 2);
+    ctx.textBaseline = 'middle';
+    ctx.fillText(m.pointText, VW / 2, VH * 0.35);
     ctx.globalAlpha = 1;
   }
 
   // Rally counter
-  if (m.rallyCount > 3 && m.ball.active) {
-    ctx.fillStyle = 'rgba(255,255,255,0.3)';
-    ctx.font = '10px monospace';
+  if (m && m.rallyCount > 3 && m.ball.active) {
+    ctx.fillStyle = 'rgba(255,255,255,0.35)';
+    ctx.font = '12px monospace';
     ctx.textAlign = 'center';
-    ctx.fillText('RALLY x' + m.rallyCount, COURT_W / 2, PLAY_T - 5);
+    ctx.fillText('RALLY x' + m.rallyCount, VW / 2, 36);
   }
 
   // Serve indicator
-  if (!m.ball.active && m.serveReady && m.serving === 'p1') {
-    ctx.globalAlpha = 0.5 + Math.sin(clock * 6) * 0.3;
+  if (m && m.playState === 'serving' && m.serveReady && m.serving === 'p1') {
+    ctx.globalAlpha = 0.6 + Math.sin(clock * 6) * 0.3;
     ctx.fillStyle = '#49d0ff';
-    ctx.font = '10px monospace';
+    ctx.font = 'bold 16px monospace';
     ctx.textAlign = 'center';
-    ctx.fillText('SERVING...', m.p1.x + 40, m.p1.y - 20);
+    ctx.fillText('CLICK TO SERVE', VW / 2, VH * 0.7);
     ctx.globalAlpha = 1;
   }
 
   ctx.restore();
 }
 
-function drawPaddle(x, y, w, h, color) {
-  // Retro pixelated paddle
-  ctx.fillStyle = color;
-  const px = x - w / 2, py = y - h / 2;
-  ctx.fillRect(px, py, w, h);
-  // Highlight edge
-  ctx.fillStyle = 'rgba(255,255,255,0.3)';
-  ctx.fillRect(px, py, 2, h);
-  // Shadow edge
-  ctx.fillStyle = 'rgba(0,0,0,0.3)';
-  ctx.fillRect(px + w - 2, py, 2, h);
+function drawCourtSurface() {
+  // Court as a projected quad
+  const corners = [
+    project(-CW / 2, 0, 0),
+    project(CW / 2, 0, 0),
+    project(CW / 2, 0, CL),
+    project(-CW / 2, 0, CL)
+  ];
+  if (!corners[0] || !corners[1] || !corners[2] || !corners[3]) return;
+
+  // Main court
+  ctx.fillStyle = '#1a5a2a';
+  ctx.beginPath();
+  ctx.moveTo(corners[0].x, corners[0].y);
+  ctx.lineTo(corners[1].x, corners[1].y);
+  ctx.lineTo(corners[2].x, corners[2].y);
+  ctx.lineTo(corners[3].x, corners[3].y);
+  ctx.closePath();
+  ctx.fill();
+
+  // Kitchen zones (slightly different shade)
+  const kitNear = [
+    project(-CW / 2, 0, NET_Z - KITCHEN_D),
+    project(CW / 2, 0, NET_Z - KITCHEN_D),
+    project(CW / 2, 0, NET_Z),
+    project(-CW / 2, 0, NET_Z)
+  ];
+  const kitFar = [
+    project(-CW / 2, 0, NET_Z),
+    project(CW / 2, 0, NET_Z),
+    project(CW / 2, 0, NET_Z + KITCHEN_D),
+    project(-CW / 2, 0, NET_Z + KITCHEN_D)
+  ];
+  ctx.fillStyle = 'rgba(255,138,61,0.08)';
+  if (kitNear[0] && kitNear[1] && kitNear[2] && kitNear[3]) {
+    ctx.beginPath();
+    ctx.moveTo(kitNear[0].x, kitNear[0].y); ctx.lineTo(kitNear[1].x, kitNear[1].y);
+    ctx.lineTo(kitNear[2].x, kitNear[2].y); ctx.lineTo(kitNear[3].x, kitNear[3].y);
+    ctx.closePath(); ctx.fill();
+  }
+  if (kitFar[0] && kitFar[1] && kitFar[2] && kitFar[3]) {
+    ctx.beginPath();
+    ctx.moveTo(kitFar[0].x, kitFar[0].y); ctx.lineTo(kitFar[1].x, kitFar[1].y);
+    ctx.lineTo(kitFar[2].x, kitFar[2].y); ctx.lineTo(kitFar[3].x, kitFar[3].y);
+    ctx.closePath(); ctx.fill();
+  }
+
+  // Court lines
+  ctx.strokeStyle = 'rgba(232,232,208,0.5)';
+  ctx.lineWidth = 1.5;
+  // Outer boundary
+  ctx.beginPath();
+  ctx.moveTo(corners[0].x, corners[0].y); ctx.lineTo(corners[1].x, corners[1].y);
+  ctx.lineTo(corners[2].x, corners[2].y); ctx.lineTo(corners[3].x, corners[3].y);
+  ctx.closePath(); ctx.stroke();
+
+  // Center line (lengthwise)
+  const cNear = project(0, 0, 0);
+  const cFar = project(0, 0, CL);
+  if (cNear && cFar) {
+    ctx.setLineDash([6, 4]);
+    ctx.strokeStyle = 'rgba(232,232,208,0.2)';
+    ctx.beginPath(); ctx.moveTo(cNear.x, cNear.y); ctx.lineTo(cFar.x, cFar.y); ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  // Kitchen lines
+  ctx.strokeStyle = 'rgba(255,138,61,0.3)';
+  ctx.lineWidth = 1;
+  const kl1 = project(-CW / 2, 0, NET_Z - KITCHEN_D);
+  const kr1 = project(CW / 2, 0, NET_Z - KITCHEN_D);
+  const kl2 = project(-CW / 2, 0, NET_Z + KITCHEN_D);
+  const kr2 = project(CW / 2, 0, NET_Z + KITCHEN_D);
+  if (kl1 && kr1) { ctx.beginPath(); ctx.moveTo(kl1.x, kl1.y); ctx.lineTo(kr1.x, kr1.y); ctx.stroke(); }
+  if (kl2 && kr2) { ctx.beginPath(); ctx.moveTo(kl2.x, kl2.y); ctx.lineTo(kr2.x, kr2.y); ctx.stroke(); }
+
+  // Baseline labels
+  ctx.fillStyle = 'rgba(255,255,255,0.08)';
+  ctx.font = '8px monospace';
+  ctx.textAlign = 'center';
+  const kitLabel = project(0, 0, NET_Z - KITCHEN_D + 0.3);
+  if (kitLabel) ctx.fillText('KITCHEN', kitLabel.x, kitLabel.y);
+}
+
+function drawNet() {
+  const posts = 7;
+  ctx.strokeStyle = 'rgba(220,220,200,0.6)';
+  ctx.lineWidth = 1.5;
+
+  // Net posts and top rope
+  for (let i = 0; i <= posts; i++) {
+    const x = -CW / 2 + (CW / posts) * i;
+    const bot = project(x, 0, NET_Z);
+    const top = project(x, NET_H, NET_Z);
+    if (bot && top) {
+      ctx.beginPath(); ctx.moveTo(bot.x, bot.y); ctx.lineTo(top.x, top.y); ctx.stroke();
+    }
+  }
+  // Top rope
+  const tl = project(-CW / 2, NET_H, NET_Z);
+  const tr = project(CW / 2, NET_H, NET_Z);
+  if (tl && tr) {
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(tl.x, tl.y); ctx.lineTo(tr.x, tr.y); ctx.stroke();
+  }
+  // Net mesh (horizontal lines)
+  ctx.strokeStyle = 'rgba(220,220,200,0.15)';
+  ctx.lineWidth = 0.5;
+  for (let h = 0.15; h < NET_H; h += 0.15) {
+    const l = project(-CW / 2, h, NET_Z);
+    const r = project(CW / 2, h, NET_Z);
+    if (l && r) { ctx.beginPath(); ctx.moveTo(l.x, l.y); ctx.lineTo(r.x, r.y); ctx.stroke(); }
+  }
+}
+
+function drawOpponent(m) {
+  const e = m.enemy;
+  // Draw opponent as a stylized figure at the far side
+  const footL = project(e.x - 0.25, 0, e.z);
+  const footR = project(e.x + 0.25, 0, e.z);
+  const hip = project(e.x, 0.5, e.z);
+  const shoulder = project(e.x, 1.2, e.z);
+  const head = project(e.x, 1.6, e.z);
+  if (!footL || !head || !shoulder || !hip) return;
+
+  const col = m.opp.color;
+  ctx.strokeStyle = col;
+  ctx.lineWidth = Math.max(1.5, 3 * head.scale);
+  ctx.lineCap = 'round';
+
+  // Legs
+  if (footR) {
+    ctx.beginPath(); ctx.moveTo(footL.x, footL.y); ctx.lineTo(hip.x, hip.y); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(footR.x, footR.y); ctx.lineTo(hip.x, hip.y); ctx.stroke();
+  }
+  // Body
+  ctx.beginPath(); ctx.moveTo(hip.x, hip.y); ctx.lineTo(shoulder.x, shoulder.y); ctx.stroke();
+  // Arms + paddle
+  const armSwing = e.swingAnim > 0 ? Math.sin(e.swingAnim * Math.PI) * 0.5 : 0;
+  const handR = project(e.x + 0.5 + armSwing, 1.0, e.z - 0.3);
+  const handL = project(e.x - 0.35, 1.0, e.z);
+  if (handR) { ctx.beginPath(); ctx.moveTo(shoulder.x, shoulder.y); ctx.lineTo(handR.x, handR.y); ctx.stroke(); }
+  if (handL) { ctx.beginPath(); ctx.moveTo(shoulder.x, shoulder.y); ctx.lineTo(handL.x, handL.y); ctx.stroke(); }
+  // Head
+  const headR = Math.max(3, 8 * head.scale);
+  ctx.fillStyle = col;
+  ctx.beginPath(); ctx.arc(head.x, head.y, headR, 0, Math.PI * 2); ctx.fill();
+
+  // Paddle in hand
+  if (handR) {
+    const paddleTop = project(e.x + 0.5 + armSwing, 1.35, e.z - 0.3);
+    if (paddleTop) {
+      ctx.strokeStyle = '#eee';
+      ctx.lineWidth = Math.max(2, 5 * head.scale);
+      ctx.beginPath(); ctx.moveTo(handR.x, handR.y); ctx.lineTo(paddleTop.x, paddleTop.y); ctx.stroke();
+    }
+  }
+
+  // Name tag
+  ctx.fillStyle = 'rgba(255,255,255,0.4)';
+  ctx.font = '9px monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText(m.opp.name.split(' ')[0], head.x, head.y - headR - 4);
+}
+
+function drawBallShadow(m) {
+  const sp = project(m.ball.x, 0.01, m.ball.z);
+  if (!sp) return;
+  ctx.globalAlpha = 0.3;
+  ctx.fillStyle = '#000';
+  const sr = Math.max(2, 5 * sp.scale);
+  ctx.beginPath(); ctx.ellipse(sp.x, sp.y, sr, sr * 0.4, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.globalAlpha = 1;
+}
+
+function drawPlayerPaddle(m) {
+  // First-person paddle at bottom of screen
+  const swing = m.playerSwingAnim > 0 ? Math.sin(m.playerSwingAnim * Math.PI) : 0;
+  const baseX = VW / 2 + (m.player.x / (CW / 2)) * VW * 0.15;
+  const baseY = VH - 40 + swing * -30;
+
+  // Paddle handle
+  ctx.strokeStyle = '#8B6914';
+  ctx.lineWidth = 6;
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(baseX + 20, VH + 10);
+  ctx.lineTo(baseX + 5, baseY + 25);
+  ctx.stroke();
+
+  // Paddle face
+  ctx.fillStyle = '#49d0ff';
+  ctx.shadowColor = '#49d0ff';
+  ctx.shadowBlur = swing > 0.3 ? 15 : 6;
+  const pw = 28 * m.stats.reachMult;
+  const ph = 35 * m.stats.reachMult;
+  const px = baseX + 5 - pw / 2;
+  const py = baseY + 25 - ph;
+
+  // Rounded rect paddle
+  const rr = 6;
+  ctx.beginPath();
+  ctx.moveTo(px + rr, py);
+  ctx.lineTo(px + pw - rr, py);
+  ctx.quadraticCurveTo(px + pw, py, px + pw, py + rr);
+  ctx.lineTo(px + pw, py + ph - rr);
+  ctx.quadraticCurveTo(px + pw, py + ph, px + pw - rr, py + ph);
+  ctx.lineTo(px + rr, py + ph);
+  ctx.quadraticCurveTo(px, py + ph, px, py + ph - rr);
+  ctx.lineTo(px, py + rr);
+  ctx.quadraticCurveTo(px, py, px + rr, py);
+  ctx.closePath();
+  ctx.fill();
+
+  // Paddle edge detail
+  ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+  ctx.lineWidth = 1;
+  ctx.stroke();
+
+  ctx.shadowBlur = 0;
 }
 
 // ============================================================
-// SCREENS
+// MATCH FLOW & SCREENS (same as before)
 // ============================================================
+function endMatch(won) {
+  gamePhase = 'match-over';
+  if (won) {
+    run.bracket[run.currentRound] = 'won';
+    Sfx.win();
+    showMatchResult('YOU WIN!', true);
+    setTimeout(() => { matchResultEl.style.display = 'none'; run.currentRound++; if (run.currentRound >= 7) showChampion(); else showUpgradeScreen(); }, 1800);
+  } else {
+    run.bracket[run.currentRound] = 'lost';
+    Sfx.lose();
+    showMatchResult('DEFEATED', false);
+    setTimeout(() => { matchResultEl.style.display = 'none'; showGameOver(); }, 2000);
+  }
+}
+
+function showMatchResult(text, isWin) {
+  document.getElementById('resultText').textContent = text;
+  document.getElementById('resultText').className = 'result-text ' + (isWin ? 'win-text' : 'lose-text');
+  matchResultEl.style.display = 'grid';
+}
+
 function hideAllScreens() {
-  screenTitle.style.display = 'none';
-  screenPreMatch.style.display = 'none';
-  screenUpgrade.style.display = 'none';
-  screenGameOver.style.display = 'none';
-  screenChampion.style.display = 'none';
-  matchResult.style.display = 'none';
-  hud.style.display = 'none';
-  slowmoBar.style.display = 'none';
+  screenTitle.style.display = 'none'; screenPreMatch.style.display = 'none';
+  screenUpgrade.style.display = 'none'; screenGameOver.style.display = 'none';
+  screenChampion.style.display = 'none'; matchResultEl.style.display = 'none';
+  hud.style.display = 'none'; slowmoBar.style.display = 'none';
+  crosshair.style.display = 'none';
 }
 
 function startNewRun() {
-  Audio.unlock();
-  run = {
-    currentRound: 0,
-    opponents: [],
-    bracket: Array(7).fill('future'),
-    seed: Math.floor(Math.random() * 1e9)
-  };
+  Sfx.unlock();
+  run = { currentRound: 0, opponents: [], bracket: Array(7).fill('future'), seed: Math.floor(Math.random() * 1e9) };
   upgrades = [];
-  // Generate all opponents
-  for (let i = 0; i < 7; i++) {
-    run.opponents.push(genOpponent(i, run.seed + i * 777));
-  }
+  for (let i = 0; i < 7; i++) run.opponents.push(genOpponent(i, run.seed + i * 777));
   run.bracket[0] = 'current';
   showPreMatch();
 }
 
 function showPreMatch() {
-  hideAllScreens();
-  gamePhase = 'prematch';
+  hideAllScreens(); gamePhase = 'prematch';
   screenPreMatch.style.display = 'grid';
-
   const opp = run.opponents[run.currentRound];
   document.getElementById('oppName').textContent = opp.name;
   document.getElementById('oppTitle').textContent = '"' + opp.title + '"';
-
-  // Stats bars
   const statsEl = document.getElementById('oppStats');
   statsEl.innerHTML = '';
-  const stats = [
-    { name: 'SPD', val: opp.speed / (AI_SPEED_BASE * 1.3) },
-    { name: 'ACC', val: opp.accuracy },
-    { name: 'AGR', val: opp.aggression },
-    { name: 'SPN', val: opp.spinSkill }
-  ];
-  for (const s of stats) {
-    const div = document.createElement('div');
-    div.className = 'stat';
-    div.innerHTML = s.name + ' <span class="stat-bar"><span class="stat-fill" style="width:' + Math.round(s.val * 100) + '%"></span></span>';
+  [{name:'SPD',val:opp.speed/6},{name:'ACC',val:opp.accuracy},{name:'AGR',val:opp.aggression},{name:'SPN',val:opp.spinSkill}].forEach(s => {
+    const div = document.createElement('div'); div.className = 'stat';
+    div.innerHTML = s.name + ' <span class="stat-bar"><span class="stat-fill" style="width:' + Math.round(clamp(s.val,0,1)*100) + '%"></span></span>';
     statsEl.appendChild(div);
-  }
-
-  // Bracket
+  });
   const bracketEl = document.getElementById('bracketDisplay');
   bracketEl.innerHTML = '';
-  const labels = ['QF1','QF2','QF3','QF4','SF1','SF2','F'];
-  for (let i = 0; i < 7; i++) {
+  ['QF1','QF2','QF3','QF4','SF1','SF2','F'].forEach((lbl, i) => {
     const div = document.createElement('div');
     div.className = 'bracket-slot ' + (i === run.currentRound ? 'current' : run.bracket[i]);
-    div.textContent = labels[i];
-    bracketEl.appendChild(div);
-  }
-
-  // Player buffs
+    div.textContent = lbl; bracketEl.appendChild(div);
+  });
   const buffsEl = document.getElementById('playerBuffs');
   buffsEl.innerHTML = '';
-  if (upgrades.length === 0) {
-    buffsEl.innerHTML = '<span style="font-size:0.65rem;color:var(--muted)">No upgrades yet</span>';
-  } else {
-    for (const u of upgrades) {
-      const span = document.createElement('span');
-      span.className = 'buff';
-      span.textContent = u.icon + ' ' + u.name;
-      buffsEl.appendChild(span);
-    }
-  }
-
-  const winScore = WIN_SCORE_BASE + Math.floor(run.currentRound / 3);
-  document.getElementById('targetScore').textContent = winScore;
-
-  // Round label
-  const roundNames = ['Quarter-Final 1','Quarter-Final 2','Quarter-Final 3','Quarter-Final 4','Semi-Final 1','Semi-Final 2','Grand Final'];
+  if (!upgrades.length) buffsEl.innerHTML = '<span style="font-size:0.65rem;color:var(--muted)">No upgrades yet</span>';
+  else upgrades.forEach(u => { const sp = document.createElement('span'); sp.className = 'buff'; sp.textContent = u.icon + ' ' + u.name; buffsEl.appendChild(sp); });
+  document.getElementById('targetScore').textContent = WIN_SCORE_BASE + Math.floor(run.currentRound / 3);
   document.getElementById('hudRound').textContent = run.currentRound + 1;
-  document.getElementById('hudMatch').textContent = labels[run.currentRound];
+  document.getElementById('hudMatch').textContent = ['QF1','QF2','QF3','QF4','SF1','SF2','F'][run.currentRound];
 }
 
 function startMatch() {
-  hideAllScreens();
-  hud.style.display = 'flex';
+  hideAllScreens(); hud.style.display = 'flex'; crosshair.style.display = 'block';
   gamePhase = 'playing';
-
   const opp = run.opponents[run.currentRound];
   const stats = computePlayerStats(upgrades);
   matchState = createMatch(opp, stats, run.currentRound);
-
   document.getElementById('scoreP1').textContent = '0';
   document.getElementById('scoreP2').textContent = '0';
   document.getElementById('hudServe').textContent = 'YOU';
-
   resetBall(matchState);
 }
 
 function showUpgradeScreen() {
-  hideAllScreens();
-  gamePhase = 'upgrading';
-  screenUpgrade.style.display = 'grid';
-
+  hideAllScreens(); gamePhase = 'upgrading'; screenUpgrade.style.display = 'grid';
   const choices = pickUpgradeChoices(upgrades);
-  const grid = document.getElementById('upgradeGrid');
-  grid.innerHTML = '';
-
-  for (const c of choices) {
-    const div = document.createElement('div');
-    div.className = 'upgrade-card';
+  const grid = document.getElementById('upgradeGrid'); grid.innerHTML = '';
+  choices.forEach(c => {
+    const div = document.createElement('div'); div.className = 'upgrade-card';
     div.innerHTML = '<div class="icon">' + c.icon + '</div><div class="name">' + c.name + '</div><div class="desc">' + c.desc + '</div>';
-    div.addEventListener('click', () => {
-      Audio.upgrade();
-      upgrades.push({ id: c.id, icon: c.icon, name: c.name });
-      run.bracket[run.currentRound] = 'current';
-      showPreMatch();
-    });
+    div.addEventListener('click', () => { Sfx.upgrade(); upgrades.push({id:c.id,icon:c.icon,name:c.name}); run.bracket[run.currentRound]='current'; showPreMatch(); });
     grid.appendChild(div);
-  }
+  });
 }
 
 function showGameOver() {
-  hideAllScreens();
-  gamePhase = 'gameover';
-  screenGameOver.style.display = 'grid';
-
-  const roundNames = ['Quarter-Final 1','Quarter-Final 2','Quarter-Final 3','Quarter-Final 4','Semi-Final 1','Semi-Final 2','Grand Final'];
-  document.getElementById('goRound').textContent = roundNames[run.currentRound];
+  hideAllScreens(); gamePhase = 'gameover'; screenGameOver.style.display = 'grid';
+  const rn = ['Quarter-Final 1','Quarter-Final 2','Quarter-Final 3','Quarter-Final 4','Semi-Final 1','Semi-Final 2','Grand Final'];
+  document.getElementById('goRound').textContent = rn[run.currentRound];
   document.getElementById('goWins').textContent = run.currentRound;
-
-  const messages = [
-    'The kitchen claimed another soul...',
-    'Your paddle wasn\'t ready for this.',
-    'Dink harder next time.',
-    'The tournament continues without you.',
-    'Every champion starts with defeat.',
-    'The court remembers all.'
-  ];
-  document.getElementById('goMessage').textContent = messages[Math.floor(Math.random() * messages.length)];
+  const msgs = ['The kitchen claimed another soul...','Your paddle wasn\'t ready.','Dink harder next time.','The tournament continues without you.','Every champion starts with defeat.','The court remembers all.'];
+  document.getElementById('goMessage').textContent = msgs[Math.floor(Math.random() * msgs.length)];
 }
 
 function showChampion() {
-  hideAllScreens();
-  gamePhase = 'champion';
-  screenChampion.style.display = 'grid';
+  hideAllScreens(); gamePhase = 'champion'; screenChampion.style.display = 'grid';
   document.getElementById('champUpgrades').textContent = upgrades.length;
-
-  const buffsEl = document.getElementById('champBuffs');
-  buffsEl.innerHTML = '';
-  for (const u of upgrades) {
-    const span = document.createElement('span');
-    span.className = 'buff';
-    span.textContent = u.icon + ' ' + u.name;
-    buffsEl.appendChild(span);
-  }
+  const buffsEl = document.getElementById('champBuffs'); buffsEl.innerHTML = '';
+  upgrades.forEach(u => { const sp = document.createElement('span'); sp.className = 'buff'; sp.textContent = u.icon + ' ' + u.name; buffsEl.appendChild(sp); });
 }
 
 // ============================================================
 // INPUT
 // ============================================================
-function getCanvasY(clientY) {
+function getCanvasCoords(clientX, clientY) {
   const rect = canvas.getBoundingClientRect();
-  return ((clientY - rect.top) / rect.height) * COURT_H;
+  return { x: ((clientX - rect.left) / rect.width) * VW, y: ((clientY - rect.top) / rect.height) * VH };
 }
 
-canvas.addEventListener('mousemove', e => { mouseY = getCanvasY(e.clientY); mouseActive = true; });
-canvas.addEventListener('touchmove', e => { e.preventDefault(); mouseY = getCanvasY(e.touches[0].clientY); mouseActive = true; }, { passive: false });
-canvas.addEventListener('touchstart', e => { e.preventDefault(); mouseY = getCanvasY(e.touches[0].clientY); mouseActive = true; }, { passive: false });
+canvas.addEventListener('mousemove', e => {
+  const c = getCanvasCoords(e.clientX, e.clientY);
+  mouseX = c.x; mouseY = c.y;
+  crosshair.style.left = e.clientX + 'px';
+  crosshair.style.top = e.clientY + 'px';
+});
+canvas.addEventListener('mousedown', e => { mouseClicked = true; e.preventDefault(); });
+canvas.addEventListener('touchmove', e => { e.preventDefault(); const c = getCanvasCoords(e.touches[0].clientX, e.touches[0].clientY); mouseX = c.x; mouseY = c.y; }, { passive: false });
+canvas.addEventListener('touchstart', e => { e.preventDefault(); mouseClicked = true; const c = getCanvasCoords(e.touches[0].clientX, e.touches[0].clientY); mouseX = c.x; mouseY = c.y; }, { passive: false });
 
 window.addEventListener('keydown', e => {
   if (e.code === 'Space' && matchState && matchState.stats.hasSlowmo && gamePhase === 'playing') {
-    if (matchState.slowmoCharge > 0.5) {
-      matchState.slowmoActive = true;
-      Audio.slowmo();
-    }
+    if (matchState.slowmoCharge > 0.5) { matchState.slowmoActive = true; Sfx.slowmo(); }
     e.preventDefault();
   }
 });
-window.addEventListener('keyup', e => {
-  if (e.code === 'Space' && matchState) {
-    matchState.slowmoActive = false;
-  }
-});
+window.addEventListener('keyup', e => { if (e.code === 'Space' && matchState) matchState.slowmoActive = false; });
 
 // ============================================================
 // BUTTON WIRING
@@ -1052,19 +1244,17 @@ document.getElementById('btnNewRun').addEventListener('click', startNewRun);
 // RESIZE
 // ============================================================
 function resize() {
-  DPR = Math.min(2, window.devicePixelRatio || 1);
   const w = window.innerWidth, h = window.innerHeight;
-  // Maintain aspect ratio
-  const aspect = COURT_W / COURT_H;
+  const aspect = VW / VH;
   let cw, ch;
   if (w / h > aspect) { ch = h; cw = h * aspect; } else { cw = w; ch = w / aspect; }
-  canvas.width = Math.floor(cw * DPR);
-  canvas.height = Math.floor(ch * DPR);
-  canvas.style.width = cw + 'px';
-  canvas.style.height = ch + 'px';
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  canvas.width = Math.floor(cw * dpr); canvas.height = Math.floor(ch * dpr);
+  canvas.style.width = cw + 'px'; canvas.style.height = ch + 'px';
+  // Compute focal length from FOV
+  focal = (VH / 2) / Math.tan((CAM.fov * Math.PI / 180) / 2);
 }
-window.addEventListener('resize', resize, { passive: true });
-resize();
+window.addEventListener('resize', resize, { passive: true }); resize();
 
 // ============================================================
 // UTILS
@@ -1077,17 +1267,16 @@ function clamp(v, a, b) { return v < a ? a : v > b ? b : v; }
 function loop(t) {
   const now = t / 1000;
   const dt = Math.min(0.05, lastTime ? now - lastTime : 0.016);
-  lastTime = now;
-  clock += dt;
+  lastTime = now; clock += dt;
 
   if (gamePhase === 'playing' && matchState) {
     updateMatch(matchState, dt);
     drawGame(matchState);
   } else {
-    // Draw idle court
     drawGame(null);
   }
 
+  mouseClicked = false; // consume click each frame
   requestAnimationFrame(loop);
 }
 requestAnimationFrame(loop);
