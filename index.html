@@ -263,7 +263,7 @@ function createPlayer(isAI, side) {
 }
 
 // --- Ball ---
-let ball = {x:0,y:0,vx:0,vy:0,active:false,gravity:0.15,lastHitBy:null,bounced:false,trail:[],inPlay:false,spin:0,onFire:false};
+let ball = {x:0,y:0,vx:0,vy:0,active:false,gravity:0.15,lastHitBy:null,bounced:false,firstBounceSide:null,trail:[],inPlay:false,spin:0,onFire:false};
 
 // --- Game state ---
 let state = STATE.TITLE;
@@ -319,7 +319,7 @@ function initMatch() {
 
 function resetBall() {
   ball.active=false; ball.inPlay=false; ball.trail=[];
-  ball.bounced=false; ball.lastHitBy=null; ball.spin=0; ball.onFire=false;
+  ball.bounced=false; ball.firstBounceSide=null; ball.lastHitBy=null; ball.spin=0; ball.onFire=false;
   serveReady=false;
   serveDelayTimer=60; // ~1 second countdown before serve is allowed
   kitchenFaultTimer=0;
@@ -336,7 +336,7 @@ function resetBall() {
 
 // ---- Serve ----
 function doServe(who) {
-  serveReady=false; ball.active=true; ball.inPlay=true; ball.bounced=false;
+  serveReady=false; ball.active=true; ball.inPlay=true; ball.bounced=false; ball.firstBounceSide=null;
   // Scale serve speed: gentler in early matches, faster in later ones
   const matchScale = 0.85 + currentOpponentIdx * 0.025;
   if(who==='left'){
@@ -381,27 +381,27 @@ function tryHit(p, isLob) {
     const powerMult=isCrit?1.8:1.0;
 
     if(p.side==='left'){
-      // Player: aim toward mouse cursor
+      // Player: send shot in the cursor direction
       const aimDx=mouseX-ball.x, aimDy=mouseY-ball.y;
       const aimDist=Math.sqrt(aimDx*aimDx+aimDy*aimDy)||1;
       const aimNx=aimDx/aimDist, aimNy=aimDy/aimDist;
-      // Ensure ball always goes toward opponent's side
-      const aimNxClamped=Math.max(0.2, aimNx);
       if(isLob){
         const spd=4+p.power*1.5;
-        ball.vx=aimNxClamped*(spd)*powerMult; ball.vy=-8-p.power*2;
+        ball.vx=aimNx*spd*powerMult;
+        ball.vy=Math.min(-2, aimNy*spd)-4-p.power;
       } else if(ball.y<p.y-60){
-        // Smash: aim toward mouse but force downward component
+        // Smash: respect aim direction, but bias downward a bit for feel
         const spd=7+p.smashPower*3;
-        ball.vx=aimNxClamped*spd*powerMult; ball.vy=Math.max(1, aimNy*spd*0.5)*powerMult;
+        ball.vx=aimNx*spd*powerMult;
+        ball.vy=(aimNy*spd + 1.5)*powerMult;
       } else if(isInKitchen(p.x, p.side)){
         const spd=2.5+p.dinkSkill*0.5;
-        ball.vx=aimNxClamped*spd*powerMult; ball.vy=Math.min(-1, aimNy*spd)*powerMult;
+        ball.vx=aimNx*spd*powerMult;
+        ball.vy=aimNy*spd*powerMult;
       } else {
         const spd=5+p.power*2.5;
-        ball.vx=aimNxClamped*spd*powerMult; ball.vy=aimNy*spd*0.6*powerMult;
-        // Clamp vy: ensure enough upward arc to clear the net
-        ball.vy=Math.max(-spd, Math.min(-1, ball.vy));
+        ball.vx=aimNx*spd*powerMult;
+        ball.vy=aimNy*spd*0.8*powerMult;
       }
     } else {
       // AI: use fixed formulas
@@ -416,7 +416,7 @@ function tryHit(p, isLob) {
       }
     }
 
-    ball.spin=p.spinPower*dir*0.3; ball.lastHitBy=p.side; ball.bounced=false;
+    ball.spin=p.spinPower*dir*0.3; ball.lastHitBy=p.side; ball.bounced=false; ball.firstBounceSide=null;
 
     // Fire ball visual
     ball.onFire = hasActivePowerup('fire_ball');
@@ -610,19 +610,27 @@ function update() {
         ball.y=COURT.groundY;
         if(!ball.bounced&&ball.inPlay){
           ball.bounced=true; ball.vy=-ball.vy*0.5; ball.vx*=0.8;
+          ball.firstBounceSide = ball.x<COURT.netX ? 'left' : 'right';
           addParticles(ball.x, COURT.groundY, '#8B7355', 4);
           if(ball.x<COURT.leftX||ball.x>COURT.rightX){
             scorePoint(ball.lastHitBy==='left'?'right':'left');
             addParticles(ball.x, COURT.groundY, '#ff4444', 8);
           }
         } else if(ball.bounced){
-          if(ball.x<COURT.netX) scorePoint('right'); else scorePoint('left');
+          if(ball.firstBounceSide==='left') scorePoint('right');
+          else if(ball.firstBounceSide==='right') scorePoint('left');
+          else if(ball.x<COURT.netX) scorePoint('right');
+          else scorePoint('left');
           addParticles(ball.x, COURT.groundY, COL.accent3, 8);
         }
       }
       if(ball.y<20){ball.y=20; ball.vy=Math.abs(ball.vy)*0.5;}
       if(ball.x<COURT.leftX-50||ball.x>COURT.rightX+50){
-        if(ball.inPlay) scorePoint(ball.lastHitBy==='left'?'right':'left');
+        if(ball.inPlay){
+          if(ball.bounced && ball.firstBounceSide==='left') scorePoint('right');
+          else if(ball.bounced && ball.firstBounceSide==='right') scorePoint('left');
+          else scorePoint(ball.lastHitBy==='left'?'right':'left');
+        }
       }
     }
 
