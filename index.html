@@ -307,8 +307,8 @@ function initMatch() {
   opponent = createPlayer(true, 'right');
   opponent.speed = opp.speed;
   opponent.power = 0.5 + opp.power*0.8;
-  opponent.reachX = 30 + opp.accuracy*15;
-  opponent.reachY = 40 + opp.accuracy*15;
+  opponent.reachX = 36 + opp.accuracy*18;
+  opponent.reachY = 46 + opp.accuracy*18;
   playerScore=0; opponentScore=0;
   servingSide='left';
   powerups=[];
@@ -485,13 +485,17 @@ function updateAI(dt) {
 
   aiDecisionTimer-=dt;
   if(aiDecisionTimer<=0){
-    aiDecisionTimer=5+opp.reaction*15;
+    aiDecisionTimer=3+opp.reaction*8;
     if(ball.active&&ball.inPlay){
       if(ball.vx>0||ball.x>COURT.netX){
-        let predX=ball.x+ball.vx*15;
-        aiTargetX=predX-15;
+        // Predict incoming contact point; bias stronger when receiving a serve
+        const isServeReceive = ball.lastHitBy==='left' && !ball.bounced;
+        const leadFrames = isServeReceive ? 20 : 15;
+        const predX = ball.x + ball.vx*leadFrames;
+        aiTargetX=Math.max(COURT.netX+25, Math.min(COURT.rightX-12, predX-12));
         const ddx=Math.abs(ball.x-opponent.x), ddy=Math.abs(ball.y-(opponent.y-40));
-        if(ddx<opponent.reachX+10&&ddy<opponent.reachY+10) aiSwingIntent=true;
+        const reachPad = isServeReceive ? 20 : 12;
+        if(ddx<opponent.reachX+reachPad&&ddy<opponent.reachY+reachPad) aiSwingIntent=true;
       } else {
         aiTargetX=600+Math.random()*60; aiSwingIntent=false;
       }
